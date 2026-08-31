@@ -48,6 +48,7 @@ const el = {
   listaTrechos: $('lista-trechos'), btnLimparTrechos: $('btn-limpar-trechos'),
   janela: $('janela'), valorJanela: $('valor-janela'),
   margem: $('margem'), valorMargem: $('valor-margem'),
+  idiomaFalado: $('idioma-falado'),
   modeloVoz: $('modelo-voz'), descricaoModelo: $('descricao-modelo'),
 };
 
@@ -390,6 +391,7 @@ async function alternarEscuta() {
     await window.api.vozParar();
     el.btnMicrofone.textContent = 'Começar a escutar';
     el.btnMicrofone.classList.remove('gravando');
+    el.idiomaFalado.disabled = false;
     el.btnMicrofone.disabled = false;
     avisar('Escuta desligada.');
     return;
@@ -405,6 +407,7 @@ async function alternarEscuta() {
 
   const r = await window.api.vozIniciar({
     modelo: el.modeloVoz.value,
+    lingua: el.idiomaFalado.value,
     janelaEstavelMs: Number(el.janela.value),
     margemFinal: Number(el.margem.value),
   });
@@ -426,6 +429,7 @@ async function alternarEscuta() {
   }
 
   fila.limpar();
+  el.idiomaFalado.disabled = true;
   el.btnMicrofone.textContent = 'Parar de escutar';
   el.btnMicrofone.classList.add('gravando');
   el.btnMicrofone.disabled = false;
@@ -655,7 +659,8 @@ function salvar() {
   window.api.salvarConfig({
     motor: el.motor.value, idioma: el.idioma.value, voz: el.voz.value,
     saida: el.saida.value, monitor: el.monitor.value, monitorar: el.monitorar.checked,
-    microfone: el.microfone.value, modeloVoz: el.modeloVoz.value,
+    microfone: el.microfone.value, idiomaFalado: el.idiomaFalado.value,
+    modeloVoz: el.modeloVoz.value,
     janela: Number(el.janela.value), margem: Number(el.margem.value),
     velocidade: Number(el.velocidade.value), tom: Number(el.tom.value),
     volume: Number(el.volume.value),
@@ -748,6 +753,7 @@ async function iniciar() {
   if (config.volume !== undefined) el.volume.value = config.volume;
   if (config.janela !== undefined) el.janela.value = config.janela;
   if (config.margem !== undefined) el.margem.value = config.margem;
+  if (config.idiomaFalado) el.idiomaFalado.value = config.idiomaFalado;
   if (config.monitorar) el.monitorar.checked = true;
   historico = Array.isArray(config.historico) ? config.historico : [];
 
@@ -805,6 +811,7 @@ el.voz.addEventListener('change', salvar);
 el.saida.addEventListener('change', salvar);
 el.monitor.addEventListener('change', salvar);
 el.microfone.addEventListener('change', () => { avaliarMicrofone(); salvar(); });
+el.idiomaFalado.addEventListener('change', salvar);
 el.modeloVoz.addEventListener('change', () => { atualizarDescricaoModelo(); salvar(); });
 
 el.monitorar.addEventListener('change', () => {

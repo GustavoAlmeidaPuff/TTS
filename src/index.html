@@ -49,8 +49,8 @@
           <div id="vivo-instalar" class="aviso oculto">
             <strong>O reconhecimento de voz ainda não foi baixado.</strong>
             <p id="vivo-instalar-texto">
-              São cerca de 453 MB, uma vez só. Depois funciona sem internet, em
-              português e inglês, trocando de um pro outro sozinho.
+              São cerca de 453 MB, uma vez só. Depois funciona sem internet no
+              idioma falado que você escolher.
             </p>
             <button class="botao pequeno" id="btn-instalar-voz">Baixar reconhecimento</button>
             <div class="barra oculto" id="barra-voz"><div id="barra-voz-preenchida"></div></div>
@@ -158,6 +158,15 @@
         <!-- só faz sentido no modo ao vivo -->
         <div class="grupo oculto" id="grupo-vivo">
           <h2>Ajuste do ao vivo</h2>
+
+          <label class="rotulo" for="idioma-falado">Idioma falado</label>
+          <select id="idioma-falado">
+            <option value="pt-BR">Português (Brasil)</option>
+            <option value="en">Inglês</option>
+          </select>
+          <p class="miudo">
+            O reconhecedor fica fixo neste idioma e não tenta detectar outro.
+          </p>
 
           <label class="rotulo deslizante" for="janela">
             Cautela <output id="valor-janela">400 ms</output>

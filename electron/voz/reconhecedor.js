@@ -34,6 +34,7 @@ const TAXA = 16000; // o modelo so trabalha em 16 kHz
  *   parado antes de ser falado. Menor = mais rapido e mais erro.
  * @property {number} [minPalavras=2] quantas palavras juntar antes de soltar.
  *   Soltar de uma em uma fica picotado; juntar demais atrasa.
+ * @property {string} [lingua='pt-BR'] idioma fixo usado pelo reconhecedor.
  * @property {number} [numThreads=2]
  */
 
@@ -50,6 +51,7 @@ class Reconhecedor extends EventEmitter {
     this.minPalavras = opcoes.minPalavras ?? 2;
     this.margemFinal = opcoes.margemFinal ?? 2;
     this.aquecimentoS = opcoes.aquecimentoS ?? 0.2;
+    this.lingua = opcoes.lingua || 'pt-BR';
 
     this.reconhecedor = new sherpa.OnlineRecognizer({
       featConfig: { sampleRate: TAXA, featureDim: 80 },
@@ -74,8 +76,16 @@ class Reconhecedor extends EventEmitter {
     });
 
     this.fluxo = this.reconhecedor.createStream();
+    this._configurarLingua();
     this._zerarTrecho();
     this._aquecer();
+  }
+
+  _configurarLingua() {
+    if (typeof this.fluxo.setOption !== 'function') {
+      throw new Error('esta versão do reconhecimento não permite fixar o idioma');
+    }
+    this.fluxo.setOption('language', this.lingua);
   }
 
   /**
@@ -121,6 +131,7 @@ class Reconhecedor extends EventEmitter {
       // mais audio pra confirmar.
       this._entregar(palpite.length, palpite, true);
       this.reconhecedor.reset(this.fluxo);
+      this._configurarLingua();
       this._zerarTrecho();
       this._aquecer();
       this.emit('fimDeTrecho');
@@ -196,6 +207,7 @@ class Reconhecedor extends EventEmitter {
 
     this._entregar(palpite.length, palpite, true);
     this.reconhecedor.reset(this.fluxo);
+    this._configurarLingua();
     this._zerarTrecho();
     this._aquecer();
   }
