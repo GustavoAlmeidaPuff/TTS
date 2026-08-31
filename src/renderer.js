@@ -594,25 +594,30 @@ function filtrarVozes() {
 
 async function verificarModelosVoz() {
   const status = await window.api.vozModelos();
+  const monolinguas = status.catalogo.filter((m) => m.lingua !== 'auto');
 
   el.modeloVoz.innerHTML = '';
-  for (const m of status.catalogo) {
+  for (const m of monolinguas) {
     const opcao = document.createElement('option');
     opcao.value = m.id;
     const baixado = status.modelosBaixados.includes(m.id);
-    opcao.textContent = `${m.nome}${baixado ? '' : ` — ${m.mb} MB a baixar`}`;
+    opcao.textContent = `${rotuloIdioma(m.lingua)}${baixado ? '' : ` — ${m.mb} MB a baixar`}`;
     opcao.dataset.descricao = m.descricao;
     el.modeloVoz.appendChild(opcao);
   }
 
-  const primeiroBaixado = status.catalogo.find((m) => status.modelosBaixados.includes(m.id));
+  const primeiroBaixado = monolinguas.find((m) => status.modelosBaixados.includes(m.id));
   if (primeiroBaixado) el.modeloVoz.value = primeiroBaixado.id;
   atualizarDescricaoModelo();
 
-  const faltaTudo = status.modelosBaixados.length === 0;
-  el.vivoInstalar.classList.toggle('oculto', !faltaTudo);
-  el.btnMicrofone.disabled = faltaTudo;
+  const modeloPronto = status.modelosBaixados.includes(el.modeloVoz.value);
+  el.vivoInstalar.classList.toggle('oculto', modeloPronto);
+  el.btnMicrofone.disabled = !modeloPronto;
   return status;
+}
+
+function rotuloIdioma(lingua) {
+  return lingua === 'en' ? 'Inglês' : lingua;
 }
 
 function atualizarDescricaoModelo() {
@@ -768,7 +773,10 @@ async function iniciar() {
   if (config.voz) el.voz.value = config.voz;
 
   const status = await verificarModelosVoz();
-  if (config.modeloVoz && status.modelosBaixados.includes(config.modeloVoz)) {
+  const modeloConfiguradoDisponivel = [...el.modeloVoz.options].some(
+    (opcao) => opcao.value === config.modeloVoz
+  );
+  if (modeloConfiguradoDisponivel && status.modelosBaixados.includes(config.modeloVoz)) {
     el.modeloVoz.value = config.modeloVoz;
     atualizarDescricaoModelo();
   }
