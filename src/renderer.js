@@ -47,7 +47,7 @@ const el = {
   contadorAtraso: $('contador-atraso'),
   listaTrechos: $('lista-trechos'), btnLimparTrechos: $('btn-limpar-trechos'),
   pausa: $('pausa'), valorPausa: $('valor-pausa'),
-  modeloVoz: $('modelo-voz'), descricaoModelo: $('descricao-modelo'),
+  vivoInstalarTitulo: $('vivo-instalar-titulo'),
 };
 
 const audioPrincipal = new Audio();
@@ -65,6 +65,42 @@ const PADROES = { velocidade: 0, tom: 0, volume: 100 };
 /** O app esta montado pro ingles: e esta a voz que ele baixa e usa. */
 const VOZ_INGLES = 'en_US-amy-medium';
 const PADRAO_CABO = /(cable input|vb-audio|virtual cable|voicemeeter|virtual audio|vac\b)/i;
+
+/** Os dois unicos idiomas: cada um puxa o reconhecedor e as vozes juntos. */
+const IDIOMAS = [
+  { id: 'pt', nome: 'Português', modelo: 'multi' },
+  { id: 'en', nome: 'Inglês', modelo: 'en' },
+];
+
+function normalizarIdioma(valor) {
+  const v = String(valor || '').toLowerCase();
+  if (v.startsWith('pt') || v === 'multi') return 'pt';
+  return 'en';
+}
+
+function metaDoIdioma(id = idiomaAtual()) {
+  return IDIOMAS.find((i) => i.id === id) || IDIOMAS[1];
+}
+
+function idiomaAtual() {
+  const ativa = el.idioma.querySelector('.escolha-opcao.ativa');
+  return ativa ? ativa.dataset.idioma : 'en';
+}
+
+function marcarIdioma(id) {
+  const alvo = normalizarIdioma(id);
+  for (const botao of el.idioma.querySelectorAll('.escolha-opcao')) {
+    botao.classList.toggle('ativa', botao.dataset.idioma === alvo);
+  }
+}
+
+function modeloDoIdioma() {
+  return metaDoIdioma().modelo;
+}
+
+function vozesDoIdioma(id = idiomaAtual()) {
+  return vozes.filter((v) => (v.lingua || '').toLowerCase().startsWith(id));
+}
 
 function avisar(mensagem, tipo = '') {
   el.estado.textContent = mensagem;

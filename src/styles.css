@@ -185,6 +185,28 @@ input[type="range"] {
 }
 .alternador input { accent-color: var(--acento); }
 
+.escolha {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  margin: 0 0 8px;
+  border: 1px solid var(--borda);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.escolha-opcao {
+  padding: 8px 10px;
+  border: 0;
+  background: transparent;
+  color: var(--texto-fraco);
+  font: inherit;
+  cursor: pointer;
+}
+.escolha-opcao + .escolha-opcao { border-left: 1px solid var(--borda); }
+.escolha-opcao.ativa {
+  background: var(--painel-alto);
+  color: var(--texto);
+}
+
 /* --------------------------------------------------------------- botoes --- */
 
 .botao {

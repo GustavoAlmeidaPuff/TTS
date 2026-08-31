@@ -34,21 +34,17 @@ const URL_VAD = `${BASE}/silero_vad.onnx`;
 const CATALOGO = [
   {
     id: 'en',
-    nome: 'Inglês (só inglês)',
+    nome: 'Inglês',
     lingua: 'en',
-    descricao:
-      'Modelo dedicado ao inglês. É o que entende inglês melhor, porque não ' +
-      'divide o que aprendeu com mais 39 idiomas nem tenta adivinhar qual você fala.',
+    descricao: 'Reconhecedor treinado só em inglês.',
     pasta: 'sherpa-onnx-nemotron-speech-streaming-en-0.6b-560ms-int8-2026-04-25',
     mb: 443,
   },
   {
     id: 'multi',
-    nome: 'Inglês e português (detecta sozinho)',
-    lingua: 'auto',
-    descricao:
-      'Mesma família, com 40 idiomas num modelo só. Entende inglês muito bem e ' +
-      'ainda aceita você trocar pro português no meio da conversa.',
+    nome: 'Português',
+    lingua: 'pt',
+    descricao: 'Reconhecedor usado quando o idioma é português.',
     pasta: 'sherpa-onnx-nemotron-3.5-asr-streaming-0.6b-320ms-int8-2026-06-11',
     mb: 453,
   },

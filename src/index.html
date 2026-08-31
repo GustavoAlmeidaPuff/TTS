@@ -47,7 +47,7 @@
         <!-- ============================= MODO AO VIVO ======================= -->
         <div id="modo-vivo" class="oculto">
           <div id="vivo-instalar" class="aviso oculto">
-            <strong>O reconhecedor escolhido ainda não foi baixado.</strong>
+            <strong id="vivo-instalar-titulo">O reconhecimento deste idioma ainda não foi baixado.</strong>
             <p id="vivo-instalar-texto">
               É baixado uma vez só. Depois o reconhecimento funciona sem internet.
             </p>
@@ -139,8 +139,12 @@
           <select id="motor"></select>
           <p class="miudo" id="descricao-motor"></p>
 
-          <label class="rotulo" for="idioma">Idioma</label>
-          <select id="idioma"></select>
+          <span class="rotulo" id="rotulo-idioma">Idioma</span>
+          <div class="escolha" id="idioma" role="radiogroup" aria-labelledby="rotulo-idioma">
+            <button type="button" class="escolha-opcao" data-idioma="pt">Português</button>
+            <button type="button" class="escolha-opcao" data-idioma="en">Inglês</button>
+          </div>
+          <p class="miudo">Troca o que o app entende e a língua da voz. Um de cada vez.</p>
 
           <label class="rotulo" for="voz">Voz</label>
           <select id="voz"></select>
@@ -166,10 +170,6 @@
             Quanto silêncio conta como “terminei de falar”. Menor responde mais
             rápido e corta quem pensa no meio da frase; maior espera mais.
           </p>
-
-          <label class="rotulo" for="modelo-voz">Idioma falado</label>
-          <select id="modelo-voz"></select>
-          <p class="miudo" id="descricao-modelo"></p>
         </div>
 
         <div class="grupo">
