@@ -46,8 +46,7 @@ const el = {
   parcialFirme: $('parcial-firme'), parcialSolto: $('parcial-solto'),
   contadorAtraso: $('contador-atraso'),
   listaTrechos: $('lista-trechos'), btnLimparTrechos: $('btn-limpar-trechos'),
-  janela: $('janela'), valorJanela: $('valor-janela'),
-  margem: $('margem'), valorMargem: $('valor-margem'),
+  pausa: $('pausa'), valorPausa: $('valor-pausa'),
   modeloVoz: $('modelo-voz'), descricaoModelo: $('descricao-modelo'),
 };
 
@@ -59,8 +58,12 @@ let historico = [];
 let urlAtual = null;
 let falando = false;
 let modo = 'digitar';
+/** Ultimo retrato do que ja foi baixado, pra decidir o que oferecer. */
+let statusVoz = { catalogo: [], modelosBaixados: [] };
 
 const PADROES = { velocidade: 0, tom: 0, volume: 100 };
+/** O app esta montado pro ingles: e esta a voz que ele baixa e usa. */
+const VOZ_INGLES = 'en_US-amy-medium';
 const PADRAO_CABO = /(cable input|vb-audio|virtual cable|voicemeeter|virtual audio|vac\b)/i;
 
 function avisar(mensagem, tipo = '') {
@@ -405,8 +408,7 @@ async function alternarEscuta() {
 
   const r = await window.api.vozIniciar({
     modelo: el.modeloVoz.value,
-    janelaEstavelMs: Number(el.janela.value),
-    margemFinal: Number(el.margem.value),
+    pausaFinalS: Number(el.pausa.value) / 1000,
   });
 
   if (!r.ok) {
@@ -541,10 +543,10 @@ async function carregarVozes() {
 
   if (motor === 'piper') {
     const status = await window.api.piperStatus();
-    el.piperInstalar.classList.toggle(
-      'oculto',
-      Boolean(status.binarioInstalado && status.vozesBaixadas.length)
-    );
+    // Ter uma voz qualquer nao basta: sem a voz inglesa, falar inglês com uma
+    // voz treinada em português sai com sotaque de leitura, palavra por palavra.
+    const temIngles = status.vozesBaixadas.includes(VOZ_INGLES);
+    el.piperInstalar.classList.toggle('oculto', Boolean(status.binarioInstalado && temIngles));
   } else {
     el.piperInstalar.classList.add('oculto');
   }
@@ -593,36 +595,34 @@ function filtrarVozes() {
 }
 
 async function verificarModelosVoz() {
-  const status = await window.api.vozModelos();
-  const monolinguas = status.catalogo.filter((m) => m.lingua !== 'auto');
+  statusVoz = await window.api.vozModelos();
 
   el.modeloVoz.innerHTML = '';
-  for (const m of monolinguas) {
+  for (const m of statusVoz.catalogo) {
     const opcao = document.createElement('option');
     opcao.value = m.id;
-    const baixado = status.modelosBaixados.includes(m.id);
-    opcao.textContent = `${rotuloIdioma(m.lingua)}${baixado ? '' : ` — ${m.mb} MB a baixar`}`;
+    const baixado = statusVoz.modelosBaixados.includes(m.id);
+    opcao.textContent = `${m.nome}${baixado ? '' : ` — ${m.mb} MB a baixar`}`;
     opcao.dataset.descricao = m.descricao;
     el.modeloVoz.appendChild(opcao);
   }
 
-  const primeiroBaixado = monolinguas.find((m) => status.modelosBaixados.includes(m.id));
+  // O catalogo vem do que entende ingles melhor pro que entende menos bem,
+  // entao o primeiro ja baixado e a melhor escolha que nao faz ninguem esperar.
+  const primeiroBaixado = statusVoz.catalogo.find((m) => statusVoz.modelosBaixados.includes(m.id));
   if (primeiroBaixado) el.modeloVoz.value = primeiroBaixado.id;
-  atualizarDescricaoModelo();
-
-  const modeloPronto = status.modelosBaixados.includes(el.modeloVoz.value);
-  el.vivoInstalar.classList.toggle('oculto', modeloPronto);
-  el.btnMicrofone.disabled = !modeloPronto;
-  return status;
+  atualizarEscolhaDeModelo();
+  return statusVoz;
 }
 
-function rotuloIdioma(lingua) {
-  return lingua === 'en' ? 'Inglês' : lingua;
-}
-
-function atualizarDescricaoModelo() {
+/** Descricao, aviso de download e botao de escutar seguem o modelo escolhido. */
+function atualizarEscolhaDeModelo() {
   const op = el.modeloVoz.selectedOptions[0];
   el.descricaoModelo.textContent = op ? op.dataset.descricao || '' : '';
+
+  const pronto = statusVoz.modelosBaixados.includes(el.modeloVoz.value);
+  el.vivoInstalar.classList.toggle('oculto', pronto);
+  el.btnMicrofone.disabled = !pronto;
 }
 
 // ============================================================== historico ====
@@ -661,7 +661,7 @@ function salvar() {
     motor: el.motor.value, idioma: el.idioma.value, voz: el.voz.value,
     saida: el.saida.value, monitor: el.monitor.value, monitorar: el.monitorar.checked,
     microfone: el.microfone.value, modeloVoz: el.modeloVoz.value,
-    janela: Number(el.janela.value), margem: Number(el.margem.value),
+    pausa: Number(el.pausa.value),
     velocidade: Number(el.velocidade.value), tom: Number(el.tom.value),
     volume: Number(el.volume.value),
     historico,
@@ -674,9 +674,7 @@ function atualizarValores() {
   const t = Number(el.tom.value);
   el.valorTom.textContent = `${t > 0 ? '+' : ''}${t} Hz`;
   el.valorVolume.textContent = `${el.volume.value}%`;
-  el.valorJanela.textContent = `${el.janela.value} ms`;
-  const m = Number(el.margem.value);
-  el.valorMargem.textContent = m === 1 ? '1 palavra' : `${m} palavras`;
+  el.valorPausa.textContent = `${(Number(el.pausa.value) / 1000).toFixed(1).replace('.', ',')}s`;
 }
 
 // =============================================================== instalacao ==
@@ -751,8 +749,7 @@ async function iniciar() {
   if (config.velocidade !== undefined) el.velocidade.value = config.velocidade;
   if (config.tom !== undefined) el.tom.value = config.tom;
   if (config.volume !== undefined) el.volume.value = config.volume;
-  if (config.janela !== undefined) el.janela.value = config.janela;
-  if (config.margem !== undefined) el.margem.value = config.margem;
+  if (config.pausa !== undefined) el.pausa.value = config.pausa;
   if (config.monitorar) el.monitorar.checked = true;
   historico = Array.isArray(config.historico) ? config.historico : [];
 
@@ -773,12 +770,9 @@ async function iniciar() {
   if (config.voz) el.voz.value = config.voz;
 
   const status = await verificarModelosVoz();
-  const modeloConfiguradoDisponivel = [...el.modeloVoz.options].some(
-    (opcao) => opcao.value === config.modeloVoz
-  );
-  if (modeloConfiguradoDisponivel && status.modelosBaixados.includes(config.modeloVoz)) {
+  if (config.modeloVoz && status.modelosBaixados.includes(config.modeloVoz)) {
     el.modeloVoz.value = config.modeloVoz;
-    atualizarDescricaoModelo();
+    atualizarEscolhaDeModelo();
   }
 
   el.texto.focus();
@@ -813,14 +807,14 @@ el.voz.addEventListener('change', salvar);
 el.saida.addEventListener('change', salvar);
 el.monitor.addEventListener('change', salvar);
 el.microfone.addEventListener('change', () => { avaliarMicrofone(); salvar(); });
-el.modeloVoz.addEventListener('change', () => { atualizarDescricaoModelo(); salvar(); });
+el.modeloVoz.addEventListener('change', () => { atualizarEscolhaDeModelo(); salvar(); });
 
 el.monitorar.addEventListener('change', () => {
   el.monitor.disabled = !el.monitorar.checked;
   salvar();
 });
 
-for (const deslizante of [el.velocidade, el.tom, el.volume, el.janela, el.margem]) {
+for (const deslizante of [el.velocidade, el.tom, el.volume, el.pausa]) {
   deslizante.addEventListener('input', atualizarValores);
   deslizante.addEventListener('change', salvar);
 }

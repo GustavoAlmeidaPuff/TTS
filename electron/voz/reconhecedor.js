@@ -1,26 +1,24 @@
 'use strict';
 
 /**
- * Reconhecimento de fala continuo, com entrega por prefixo estavel.
+ * Reconhecimento de fala continuo, com entrega por frase completa.
  *
  * ---------------------------------------------------------------------------
- * O problema que este arquivo resolve
+ * Por que a frase so sai depois que voce para de falar
  * ---------------------------------------------------------------------------
- * Um reconhecedor streaming vai corrigindo o proprio palpite enquanto voce
- * fala. Ele pode dizer "I want", depois "I wanted", depois "I want it to".
- * Se a gente mandasse cada palpite direto pro TTS, a voz gaguejaria e repetiria
- * -- porque falar e irreversivel: o que ja saiu no cabo nao volta.
+ * Um reconhecedor streaming corrige o proprio palpite enquanto voce fala: ele
+ * diz "I want", depois "I wanted", depois "I want it to". Falar e irreversivel
+ * -- o que ja saiu no cabo nao volta --, entao entregar no meio da frase e
+ * apostar que o palpite nao vai mudar mais. Quando muda, a voz gagueja, repete
+ * e troca palavras.
  *
- * Mas esperar a frase inteira acabar (que e o que a "deteccao de fim de fala"
- * faz) joga fora exatamente o que foi pedido: nao esperar voce terminar.
+ * Aqui a aposta e outra: espera-se a pausa. Custa o tempo de uma frase em
+ * atraso, e em troca o texto sai com o contexto inteiro -- palavras corrigidas
+ * pelo que veio depois, pontuacao e maiusculas no lugar. E o que faz o TTS ler
+ * com entonacao de frase em vez de ladainha.
  *
- * A saida e entregar apenas o **prefixo estavel**: a parte do inicio do palpite
- * que parou de mudar ha tempo suficiente. Se "I want" continua igual por 400ms
- * enquanto o resto ainda oscila, "I want" ja pode ser falado com seguranca --
- * o reconhecedor praticamente nao volta atras num prefixo assentado.
- *
- * E assim que interprete simultaneo funciona, e e o que da pra fazer sem
- * inventar viagem no tempo.
+ * Quem decide que voce terminou e a deteccao de fim de fala do sherpa, medindo
+ * o silencio depois do audio ja reconhecido (`pausaFinalS`).
  * ---------------------------------------------------------------------------
  */
 
@@ -30,10 +28,8 @@ const TAXA = 16000; // o modelo so trabalha em 16 kHz
 
 /**
  * @typedef {Object} Opcoes
- * @property {number} [janelaEstavelMs=400] quanto tempo um prefixo precisa ficar
- *   parado antes de ser falado. Menor = mais rapido e mais erro.
- * @property {number} [minPalavras=2] quantas palavras juntar antes de soltar.
- *   Soltar de uma em uma fica picotado; juntar demais atrasa.
+ * @property {number} [pausaFinalS=0.8] quanto silencio encerra a frase. Menor
+ *   responde antes e corta quem pensa no meio da frase; maior espera mais.
  * @property {number} [numThreads=2]
  */
 
@@ -46,9 +42,7 @@ class Reconhecedor extends EventEmitter {
     super();
     const sherpa = require('sherpa-onnx-node');
 
-    this.janelaEstavelMs = opcoes.janelaEstavelMs ?? 400;
-    this.minPalavras = opcoes.minPalavras ?? 2;
-    this.margemFinal = opcoes.margemFinal ?? 2;
+    this.pausaFinalS = opcoes.pausaFinalS ?? 0.8;
     this.aquecimentoS = opcoes.aquecimentoS ?? 0.2;
 
     this.reconhecedor = new sherpa.OnlineRecognizer({
@@ -65,16 +59,19 @@ class Reconhecedor extends EventEmitter {
         debug: 0,
       },
       decodingMethod: 'greedy_search',
-      // A deteccao de fim de fala continua ligada, mas aqui ela nao e o que
-      // dispara a fala -- serve so pra fechar o trecho e limpar o estado.
+      // A deteccao de fim de fala e o que dispara a fala.
       enableEndpoint: true,
+      // Silencio sem nada reconhecido: nao ha frase pra fechar, entao pode
+      // esperar bem mais do que a pausa entre frases.
       rule1MinTrailingSilence: 2.4,
-      rule2MinTrailingSilence: 0.8,
+      rule2MinTrailingSilence: this.pausaFinalS,
+      // Teto de seguranca: quem fala sem pausa nenhuma nao pode virar uma
+      // frase que cresce pra sempre e nunca e falada.
       rule3MinUtteranceLength: 20,
     });
 
     this.fluxo = this.reconhecedor.createStream();
-    this._zerarTrecho();
+    this.palpite = '';
     this._aquecer();
   }
 
@@ -89,15 +86,8 @@ class Reconhecedor extends EventEmitter {
     this.fluxo.acceptWaveform({ samples: new Float32Array(Math.round(TAXA * this.aquecimentoS)), sampleRate: TAXA });
   }
 
-  _zerarTrecho() {
-    /** palavras ja entregues (ja foram faladas, nao voltam atras) */
-    this.entregues = [];
-    /** ultimo palpite visto, em palavras */
-    this.ultimoPalpite = [];
-    /** palavra vista em cada posicao, pra saber quando aquela posicao mudou */
-    this.porPosicao = [];
-    /** instante da ultima mudanca em cada posicao */
-    this.mudouEm = [];
+  _lerPalpite() {
+    return (this.reconhecedor.getResult(this.fluxo).text || '').trim();
   }
 
   /**
@@ -111,77 +101,35 @@ class Reconhecedor extends EventEmitter {
       this.reconhecedor.decode(this.fluxo);
     }
 
-    const texto = (this.reconhecedor.getResult(this.fluxo).text || '').trim();
-    const palpite = texto ? texto.split(/\s+/) : [];
+    this.palpite = this._lerPalpite();
+    // O palpite serve so pra tela: mostra que o app esta ouvindo enquanto a
+    // frase ainda pode mudar. Nada dele e falado.
+    this.emit('parcial', { texto: this.palpite, entregue: '' });
 
-    this._avaliarPrefixo(palpite);
-
-    if (this.reconhecedor.isEndpoint(this.fluxo)) {
-      // Fim de fala: solta o que sobrou sem esperar estabilizar, porque nao vem
-      // mais audio pra confirmar.
-      this._entregar(palpite.length, palpite, true);
-      this.reconhecedor.reset(this.fluxo);
-      this._zerarTrecho();
-      this._aquecer();
-      this.emit('fimDeTrecho');
-    }
+    if (this.reconhecedor.isEndpoint(this.fluxo)) this._fecharFrase();
   }
 
   /**
-   * Decide quanto do palpite ja assentou o bastante pra ser falado.
-   *
-   * A estabilidade e medida POR POSICAO, e nao pelo prefixo inteiro. Isso
-   * importa: se medissemos o prefixo como um todo, cada palavra nova no fim
-   * reiniciaria o cronometro e nada sairia enquanto voce estivesse falando --
-   * exatamente o defeito que essa classe existe pra evitar.
-   *
-   * Alem disso, as ultimas palavras do palpite sao sempre as mais volateis
-   * (e onde o reconhecedor ainda esta se decidindo), entao guardo uma margem
-   * no fim que nunca e entregue de imediato.
+   * Fecha a frase atual: entrega o texto pra ser falado e zera pra proxima.
    */
-  _avaliarPrefixo(palpite) {
-    const agora = Date.now();
+  _fecharFrase() {
+    const frase = this.palpite;
 
-    for (let i = 0; i < palpite.length; i++) {
-      if (this.porPosicao[i] !== palpite[i]) {
-        this.porPosicao[i] = palpite[i];
-        this.mudouEm[i] = agora;
-      }
+    if (frase) {
+      // A frase aceita aparece solida na tela antes de sumir; o palpite em
+      // andamento fica apagado. Assim da pra ver o que foi aceito de verdade.
+      this.emit('parcial', { texto: frase, entregue: frase });
+      this.emit('trecho', { texto: normalizar(frase), fim: true });
     }
-    // Se o palpite encurtou, o que sobrou do estado nao vale mais.
-    this.porPosicao.length = palpite.length;
-    this.mudouEm.length = palpite.length;
 
-    const limite = palpite.length - this.margemFinal;
-    let ate = this.entregues.length;
-    while (ate < limite && agora - this.mudouEm[ate] >= this.janelaEstavelMs) ate++;
-
-    this._entregar(ate, palpite, false);
-
-    this.ultimoPalpite = palpite;
-    this.emit('parcial', {
-      texto: palpite.join(' '),
-      entregue: this.entregues.join(' '),
-    });
+    this.reconhecedor.reset(this.fluxo);
+    this.palpite = '';
+    this._aquecer();
+    this.emit('fimDeTrecho');
   }
 
   /**
-   * Solta as palavras novas do prefixo, se valer a pena.
-   * @param {number} ate quantas palavras do palpite ja podem sair
-   * @param {string[]} palpite
-   * @param {boolean} forcar ignora o minimo de palavras (usado no fim da fala)
-   */
-  _entregar(ate, palpite, forcar) {
-    const novas = palpite.slice(this.entregues.length, ate);
-    if (!novas.length) return;
-    if (!forcar && novas.length < this.minPalavras) return;
-
-    this.entregues = palpite.slice(0, ate);
-    this.emit('trecho', { texto: normalizar(novas.join(' ')), fim: forcar });
-  }
-
-  /**
-   * Fecha o trecho atual e solta o que estiver pendente.
+   * Fecha a frase na hora, sem esperar a pausa (usado ao desligar o microfone).
    *
    * Antes de ler o resultado final, entrega meio segundo de silencio e decodifica
    * de novo: sem isso a ultima palavra sai cortada ("different" virou "diff"),
@@ -191,13 +139,8 @@ class Reconhecedor extends EventEmitter {
     this.fluxo.acceptWaveform({ samples: new Float32Array(TAXA / 2), sampleRate: TAXA });
     while (this.reconhecedor.isReady(this.fluxo)) this.reconhecedor.decode(this.fluxo);
 
-    const texto = (this.reconhecedor.getResult(this.fluxo).text || '').trim();
-    const palpite = texto ? texto.split(/\s+/) : this.ultimoPalpite;
-
-    this._entregar(palpite.length, palpite, true);
-    this.reconhecedor.reset(this.fluxo);
-    this._zerarTrecho();
-    this._aquecer();
+    this.palpite = this._lerPalpite() || this.palpite;
+    this._fecharFrase();
   }
 
   liberar() {
@@ -207,8 +150,8 @@ class Reconhecedor extends EventEmitter {
 }
 
 /**
- * Alguns modelos (os zipformer) devolvem TUDO EM CAIXA ALTA, sem pontuacao.
- * Outros (o nemotron) ja devolvem pontuado e capitalizado direito.
+ * Alguns modelos devolvem TUDO EM CAIXA ALTA, sem pontuacao. Os nemotron ja
+ * devolvem pontuado e capitalizado direito.
  *
  * Entao a correcao tem que ser condicional: baixar a caixa so quando nao ha
  * nenhuma minuscula no texto. Baixar sempre destruiria a capitalizacao boa do

@@ -27,7 +27,7 @@ class Sessao extends EventEmitter {
 
   /**
    * Liga o reconhecimento.
-   * @param {{modelo?: string, janelaEstavelMs?: number, margemFinal?: number, minPalavras?: number}} opcoes
+   * @param {{modelo?: string, pausaFinalS?: number, numThreads?: number}} opcoes
    */
   iniciar(opcoes = {}) {
     if (this.reconhecedor) this.parar();
@@ -40,9 +40,7 @@ class Sessao extends EventEmitter {
 
     const t0 = Date.now();
     this.reconhecedor = new Reconhecedor(arquivos, {
-      janelaEstavelMs: opcoes.janelaEstavelMs ?? 400,
-      margemFinal: opcoes.margemFinal ?? 2,
-      minPalavras: opcoes.minPalavras ?? 2,
+      pausaFinalS: opcoes.pausaFinalS ?? 0.8,
       numThreads: opcoes.numThreads ?? 2,
     });
     this.idModelo = idModelo;

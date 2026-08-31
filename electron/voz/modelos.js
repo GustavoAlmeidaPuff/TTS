@@ -18,46 +18,39 @@ const BASE = 'https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models
 const URL_VAD = `${BASE}/silero_vad.onnx`;
 
 /**
- * Reconhecedores disponiveis. Todos sao "streaming": vao devolvendo o texto
- * enquanto voce fala, em vez de esperar a frase acabar.
+ * Reconhecedores disponiveis, do que entende ingles melhor pro que entende
+ * menos bem. A interface oferece nessa ordem e escolhe o primeiro ja baixado.
  *
- * O padrao e o `multi`, e a diferenca pros zipformers so-ingles e grande --
- * medido, nao chutado. Na mesma frase em ingles:
+ * So ha modelos da familia nemotron aqui. Os zipformer pequenos cabem em
+ * qualquer maquina, mas a diferenca de qualidade e grande demais pra oferecer
+ * -- medido, nao chutado, na mesma frase em ingles:
  *
  *   zipformer : "hullo ever one welcome back to the stream to day we are..."
  *   nemotron  : "Hello everyone, welcome back to the stream. Today we are..."
  *
- * Alem de acertar mais, ele detecta o idioma sozinho (40 locales, pt-BR entre
- * eles) e ja devolve pontuacao e maiusculas -- o que faz o TTS ler com entonacao
- * bem melhor do que um texto corrido em caixa alta.
+ * Alem de acertar mais, o nemotron devolve pontuacao e maiusculas -- o que faz
+ * o TTS ler com entonacao de frase em vez de ladainha em caixa alta.
  */
 const CATALOGO = [
   {
+    id: 'en',
+    nome: 'Inglês (só inglês)',
+    lingua: 'en',
+    descricao:
+      'Modelo dedicado ao inglês. É o que entende inglês melhor, porque não ' +
+      'divide o que aprendeu com mais 39 idiomas nem tenta adivinhar qual você fala.',
+    pasta: 'sherpa-onnx-nemotron-speech-streaming-en-0.6b-560ms-int8-2026-04-25',
+    mb: 443,
+  },
+  {
     id: 'multi',
-    nome: 'Multi-idioma (recomendado)',
+    nome: 'Inglês e português (detecta sozinho)',
     lingua: 'auto',
     descricao:
-      'Português e inglês no mesmo modelo, trocando de um pro outro sozinho. ' +
-      'Devolve pontuação e maiúsculas. É o mais certeiro.',
+      'Mesma família, com 40 idiomas num modelo só. Entende inglês muito bem e ' +
+      'ainda aceita você trocar pro português no meio da conversa.',
     pasta: 'sherpa-onnx-nemotron-3.5-asr-streaming-0.6b-320ms-int8-2026-06-11',
     mb: 453,
-    padrao: true,
-  },
-  {
-    id: 'multi-rapido',
-    nome: 'Multi-idioma, atraso menor',
-    lingua: 'auto',
-    descricao: 'O mesmo modelo com blocos de 160ms em vez de 320ms: responde antes, gasta mais CPU.',
-    pasta: 'sherpa-onnx-nemotron-3.5-asr-streaming-0.6b-160ms-int8-2026-06-11',
-    mb: 453,
-  },
-  {
-    id: 'en-leve',
-    nome: 'Só inglês, bem leve',
-    lingua: 'en',
-    descricao: 'Para máquina fraca: 122 MB e carrega em 1s. Erra bem mais, e não entende português.',
-    pasta: 'sherpa-onnx-streaming-zipformer-en-20M-2023-02-17',
-    mb: 122,
   },
 ];
 

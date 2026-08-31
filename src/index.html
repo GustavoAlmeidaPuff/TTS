@@ -47,10 +47,9 @@
         <!-- ============================= MODO AO VIVO ======================= -->
         <div id="modo-vivo" class="oculto">
           <div id="vivo-instalar" class="aviso oculto">
-            <strong>O idioma falado escolhido ainda não foi baixado.</strong>
+            <strong>O reconhecedor escolhido ainda não foi baixado.</strong>
             <p id="vivo-instalar-texto">
-              É baixado uma vez só. Depois o reconhecimento funciona sem internet
-              e fica limitado a esse idioma.
+              É baixado uma vez só. Depois o reconhecimento funciona sem internet.
             </p>
             <button class="botao pequeno" id="btn-instalar-voz">Baixar reconhecimento</button>
             <div class="barra oculto" id="barra-voz"><div id="barra-voz-preenchida"></div></div>
@@ -63,7 +62,7 @@
               <div class="medidor" title="volume do microfone">
                 <div id="medidor-preenchido"></div>
               </div>
-              <span class="dica" id="dica-vivo">Fale e a voz sai sozinha, sem esperar você terminar.</span>
+              <span class="dica" id="dica-vivo">Fale à vontade: cada frase sai depois que você faz uma pausa.</span>
             </div>
 
             <label class="rotulo" for="microfone">Microfone</label>
@@ -147,9 +146,9 @@
           <select id="voz"></select>
 
           <div id="piper-instalar" class="aviso oculto">
-            <strong>O motor offline ainda não foi baixado.</strong>
+            <strong>Falta a voz em inglês do motor offline.</strong>
             <p>São cerca de 80 MB, uma vez só. Depois funciona sem internet.</p>
-            <button class="botao pequeno" id="btn-instalar-piper">Baixar voz offline</button>
+            <button class="botao pequeno" id="btn-instalar-piper">Baixar voz em inglês</button>
             <div class="barra oculto" id="barra-piper"><div id="barra-piper-preenchida"></div></div>
             <p class="miudo" id="texto-progresso-piper"></p>
           </div>
@@ -159,22 +158,13 @@
         <div class="grupo oculto" id="grupo-vivo">
           <h2>Ajuste do ao vivo</h2>
 
-          <label class="rotulo deslizante" for="janela">
-            Cautela <output id="valor-janela">400 ms</output>
+          <label class="rotulo deslizante" for="pausa">
+            Pausa que encerra a frase <output id="valor-pausa">0,8s</output>
           </label>
-          <input type="range" id="janela" min="150" max="900" step="50" value="400" />
+          <input type="range" id="pausa" min="400" max="2000" step="100" value="800" />
           <p class="miudo">
-            Quanto tempo esperar uma palavra “assentar” antes de falar. Menor
-            responde mais rápido e erra mais.
-          </p>
-
-          <label class="rotulo deslizante" for="margem">
-            Margem <output id="valor-margem">2 palavras</output>
-          </label>
-          <input type="range" id="margem" min="0" max="5" step="1" value="2" />
-          <p class="miudo">
-            Quantas palavras do fim segurar. O fim da frase é onde o
-            reconhecedor mais muda de ideia.
+            Quanto silêncio conta como “terminei de falar”. Menor responde mais
+            rápido e corta quem pensa no meio da frase; maior espera mais.
           </p>
 
           <label class="rotulo" for="modelo-voz">Idioma falado</label>
