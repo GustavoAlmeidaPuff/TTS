@@ -25,6 +25,14 @@
 const { EventEmitter } = require('events');
 
 const TAXA = 16000; // o modelo so trabalha em 16 kHz
+/** RMS acima disso, num bloco de ~100ms, conta como fala e nao como ruido. */
+const LIMIAR_FALA = 0.01;
+/**
+ * Silencio extra pra o encoder despejar o ultimo pedaco. Os modelos daqui
+ * trabalham em janelas de 320ms ou 560ms: sem encher a janela, uma palavra
+ * curta fica presa e some no reset.
+ */
+const CAUDA_S = 0.6;
 
 /**
  * @typedef {Object} Opcoes
@@ -72,6 +80,7 @@ class Reconhecedor extends EventEmitter {
 
     this.fluxo = this.reconhecedor.createStream();
     this.palpite = '';
+    this._ouviuFala = false;
     this._aquecer();
   }
 
@@ -91,10 +100,24 @@ class Reconhecedor extends EventEmitter {
   }
 
   /**
+   * Empurra silencio e decodifica de novo, pra o encoder fechar a janela
+   * incompleta. Sem isso a ultima (ou unica) palavra fica presa no buffer.
+   */
+  _despejarCauda() {
+    this.fluxo.acceptWaveform({
+      samples: new Float32Array(Math.round(TAXA * CAUDA_S)),
+      sampleRate: TAXA,
+    });
+    while (this.reconhecedor.isReady(this.fluxo)) this.reconhecedor.decode(this.fluxo);
+  }
+
+  /**
    * Entrega audio ao reconhecedor.
    * @param {Float32Array} amostras mono, 16 kHz, faixa -1..1
    */
   alimentar(amostras) {
+    if (energia(amostras) > LIMIAR_FALA) this._ouviuFala = true;
+
     this.fluxo.acceptWaveform({ samples: amostras, sampleRate: TAXA });
 
     while (this.reconhecedor.isReady(this.fluxo)) {
@@ -106,7 +129,15 @@ class Reconhecedor extends EventEmitter {
     // frase ainda pode mudar. Nada dele e falado.
     this.emit('parcial', { texto: this.palpite, entregue: '' });
 
-    if (this.reconhecedor.isEndpoint(this.fluxo)) this._fecharFrase();
+    if (!this.reconhecedor.isEndpoint(this.fluxo)) return;
+
+    // Palavra curta: a pausa chega antes do decoder emitir token nenhum.
+    // Sem a cauda, o reset joga fora o audio que ainda estava na janela.
+    if (!this.palpite && this._ouviuFala) {
+      this._despejarCauda();
+      this.palpite = this._lerPalpite() || this.palpite;
+    }
+    this._fecharFrase();
   }
 
   /**
@@ -124,6 +155,7 @@ class Reconhecedor extends EventEmitter {
 
     this.reconhecedor.reset(this.fluxo);
     this.palpite = '';
+    this._ouviuFala = false;
     this._aquecer();
     this.emit('fimDeTrecho');
   }
@@ -131,14 +163,12 @@ class Reconhecedor extends EventEmitter {
   /**
    * Fecha a frase na hora, sem esperar a pausa (usado ao desligar o microfone).
    *
-   * Antes de ler o resultado final, entrega meio segundo de silencio e decodifica
-   * de novo: sem isso a ultima palavra sai cortada ("different" virou "diff"),
+   * Antes de ler o resultado final, entrega silencio e decodifica de novo:
+   * sem isso a ultima palavra sai cortada ("different" virou "diff"),
    * porque o modelo ainda nao tinha contexto suficiente pra fechar ela.
    */
   encerrarTrecho() {
-    this.fluxo.acceptWaveform({ samples: new Float32Array(TAXA / 2), sampleRate: TAXA });
-    while (this.reconhecedor.isReady(this.fluxo)) this.reconhecedor.decode(this.fluxo);
-
+    this._despejarCauda();
     this.palpite = this._lerPalpite() || this.palpite;
     this._fecharFrase();
   }
@@ -161,6 +191,12 @@ class Reconhecedor extends EventEmitter {
 function normalizar(texto) {
   const cru = texto.trim();
   return /[a-zà-ÿ]/.test(cru) ? cru : cru.toLowerCase();
+}
+
+function energia(amostras) {
+  let soma = 0;
+  for (let i = 0; i < amostras.length; i++) soma += amostras[i] * amostras[i];
+  return Math.sqrt(soma / (amostras.length || 1));
 }
 
 module.exports = { Reconhecedor, TAXA, normalizar };
