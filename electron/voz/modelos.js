@@ -18,8 +18,8 @@ const BASE = 'https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models
 const URL_VAD = `${BASE}/silero_vad.onnx`;
 
 /**
- * Reconhecedores disponiveis, do que entende ingles melhor pro que entende
- * menos bem. A interface oferece nessa ordem e escolhe o primeiro ja baixado.
+ * Reconhecedores: um por idioma. A interface escolhe pelo idioma, nao pela
+ * ordem desta lista.
  *
  * So ha modelos da familia nemotron aqui. Os zipformer pequenos cabem em
  * qualquer maquina, mas a diferenca de qualidade e grande demais pra oferecer

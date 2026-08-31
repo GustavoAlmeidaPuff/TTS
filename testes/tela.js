@@ -31,8 +31,10 @@ const { abrirApp, esperar, fotografar, relatar } = require('./comum');
         microfones: opcoes('microfone'),
         microfoneEscolhido: document.getElementById('microfone').selectedOptions[0]
           ? document.getElementById('microfone').selectedOptions[0].textContent : null,
-        reconhecedores: opcoes('modelo-voz'),
-        reconhecedorEscolhido: v('modelo-voz'),
+        idioma: document.getElementById('idioma').querySelector('.escolha-opcao.ativa')
+          ? document.getElementById('idioma').querySelector('.escolha-opcao.ativa').dataset.idioma
+          : null,
+        idiomas: [...document.getElementById('idioma').querySelectorAll('.escolha-opcao')].map((o) => o.textContent),
         precisaBaixarReconhecedor: visivel('vivo-instalar'),
         botaoMicrofoneLiberado: !document.getElementById('btn-microfone').disabled,
         avisoCaboVisivel: visivel('aviso-cabo'),

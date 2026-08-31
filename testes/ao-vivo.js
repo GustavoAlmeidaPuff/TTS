@@ -37,11 +37,9 @@ const CASOS = {
     await new Promise((r) => setTimeout(r, 2500));
 
     const idioma = document.getElementById('idioma');
-    const alvo = ${JSON.stringify(LINGUA === 'pt' ? 'pt-BR' : 'en-US')};
-    if ([...idioma.options].some((o) => o.value === alvo)) {
-      idioma.value = alvo;
-      idioma.dispatchEvent(new Event('change'));
-    }
+    const alvo = ${JSON.stringify(LINGUA === 'pt' ? 'pt' : 'en')};
+    const botao = [...idioma.querySelectorAll('.escolha-opcao')].find((o) => o.dataset.idioma === alvo);
+    if (botao) botao.click();
 
     const mic = document.getElementById('microfone');
     const real = [...mic.options].find((o) => !/cable|vb-audio|virtual/i.test(o.textContent));
@@ -52,7 +50,9 @@ const CASOS = {
       idioma: idioma.value,
       voz: document.getElementById('voz').value,
       microfone: mic.selectedOptions[0] ? mic.selectedOptions[0].textContent : null,
-      reconhecedor: document.getElementById('modelo-voz').value,
+      reconhecedor: document.getElementById('idioma').querySelector('.escolha-opcao.ativa')
+        ? document.getElementById('idioma').querySelector('.escolha-opcao.ativa').dataset.idioma
+        : null,
     };
   })()`);
   console.log('=== PREPARO ===');

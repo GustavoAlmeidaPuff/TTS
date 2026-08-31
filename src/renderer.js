@@ -60,6 +60,9 @@ let falando = false;
 let modo = 'digitar';
 /** Ultimo retrato do que ja foi baixado, pra decidir o que oferecer. */
 let statusVoz = { catalogo: [], modelosBaixados: [] };
+/** Ultima voz usada em cada idioma, pra voltar nela ao alternar. */
+let vozPorIdioma = {};
+let idiomaAnterior = 'en';
 
 const PADROES = { velocidade: 0, tom: 0, volume: 100 };
 /** O app esta montado pro ingles: e esta a voz que ele baixa e usa. */
@@ -427,7 +430,7 @@ async function alternarEscuta() {
   avisar('Carregando o reconhecedor…', 'ocupado');
 
   const r = await window.api.vozIniciar({
-    modelo: el.modeloVoz.value,
+    modelo: modeloDoIdioma(),
     pausaFinalS: Number(el.pausa.value) / 1000,
   });
 
@@ -555,7 +558,6 @@ async function carregarVozes() {
   if (!r.ok) {
     vozes = [];
     el.voz.innerHTML = '<option>—</option>';
-    el.idioma.innerHTML = '<option>—</option>';
     avisar(r.erro, 'erro');
   } else {
     vozes = r.vozes;
@@ -573,37 +575,23 @@ async function carregarVozes() {
 
   if (!vozes.length) {
     el.voz.innerHTML = '<option>nenhuma voz disponível</option>';
-    el.idioma.innerHTML = '<option>—</option>';
     if (r.ok) avisar('Nenhuma voz disponível neste motor.', 'erro');
     return;
   }
-
-  const idiomas = [...new Set(vozes.map((v) => v.lingua))].sort((a, b) => {
-    if (a.startsWith('en')) return -1;
-    if (b.startsWith('en')) return 1;
-    return a.localeCompare(b);
-  });
-
-  const anterior = el.idioma.value;
-  el.idioma.innerHTML = '';
-  for (const lingua of idiomas) {
-    const opcao = document.createElement('option');
-    opcao.value = lingua;
-    opcao.textContent = `${lingua} (${vozes.filter((v) => v.lingua === lingua).length})`;
-    el.idioma.appendChild(opcao);
-  }
-  el.idioma.value = idiomas.includes(anterior) ? anterior : idiomas[0];
 
   filtrarVozes();
   avisar('Pronto.');
 }
 
 function filtrarVozes() {
-  const lingua = el.idioma.value;
-  const anterior = el.voz.value;
-  const doIdioma = vozes.filter((v) => v.lingua === lingua);
+  const doIdioma = vozesDoIdioma();
+  const lembrada = vozPorIdioma[idiomaAtual()] || el.voz.value;
 
   el.voz.innerHTML = '';
+  if (!doIdioma.length) {
+    el.voz.innerHTML = '<option>nenhuma voz neste idioma</option>';
+    return;
+  }
   for (const v of doIdioma) {
     const opcao = document.createElement('option');
     opcao.value = v.id;
@@ -611,38 +599,65 @@ function filtrarVozes() {
     opcao.textContent = `${v.nome} (${v.genero})${traco}`;
     el.voz.appendChild(opcao);
   }
-  if (doIdioma.some((v) => v.id === anterior)) el.voz.value = anterior;
+  if (doIdioma.some((v) => v.id === lembrada)) el.voz.value = lembrada;
 }
 
 async function verificarModelosVoz() {
   statusVoz = await window.api.vozModelos();
-
-  el.modeloVoz.innerHTML = '';
-  for (const m of statusVoz.catalogo) {
-    const opcao = document.createElement('option');
-    opcao.value = m.id;
-    const baixado = statusVoz.modelosBaixados.includes(m.id);
-    opcao.textContent = `${m.nome}${baixado ? '' : ` — ${m.mb} MB a baixar`}`;
-    opcao.dataset.descricao = m.descricao;
-    el.modeloVoz.appendChild(opcao);
-  }
-
-  // O catalogo vem do que entende ingles melhor pro que entende menos bem,
-  // entao o primeiro ja baixado e a melhor escolha que nao faz ninguem esperar.
-  const primeiroBaixado = statusVoz.catalogo.find((m) => statusVoz.modelosBaixados.includes(m.id));
-  if (primeiroBaixado) el.modeloVoz.value = primeiroBaixado.id;
   atualizarEscolhaDeModelo();
   return statusVoz;
 }
 
-/** Descricao, aviso de download e botao de escutar seguem o modelo escolhido. */
+/** Aviso de download e botao de escutar seguem o idioma atual. */
 function atualizarEscolhaDeModelo() {
-  const op = el.modeloVoz.selectedOptions[0];
-  el.descricaoModelo.textContent = op ? op.dataset.descricao || '' : '';
-
-  const pronto = statusVoz.modelosBaixados.includes(el.modeloVoz.value);
+  const meta = metaDoIdioma();
+  const pronto = statusVoz.modelosBaixados.includes(meta.modelo);
   el.vivoInstalar.classList.toggle('oculto', pronto);
   el.btnMicrofone.disabled = !pronto;
+  el.vivoInstalarTitulo.textContent = `Falta o reconhecimento em ${meta.nome.toLowerCase()}.`;
+  el.vivoInstalarTexto.textContent =
+    'É baixado uma vez só. Depois o reconhecimento funciona sem internet.';
+}
+
+let trocandoIdioma = false;
+
+async function aoMudarIdioma(novo) {
+  if (trocandoIdioma) return;
+  trocandoIdioma = true;
+  vozPorIdioma[idiomaAnterior] = el.voz.value;
+  marcarIdioma(novo);
+  idiomaAnterior = idiomaAtual();
+  filtrarVozes();
+  vozPorIdioma[idiomaAtual()] = el.voz.value;
+  atualizarEscolhaDeModelo();
+  salvar();
+  try {
+    if (microfone.ligado) await reiniciarEscuta();
+  } finally {
+    trocandoIdioma = false;
+  }
+}
+
+/** Troca o reconhecedor sem desligar o botao de escuta de vez. */
+async function reiniciarEscuta() {
+  el.btnMicrofone.disabled = true;
+  window.api.vozEncerrarTrecho();
+  await desligarMicrofone();
+  await window.api.vozParar();
+  fila.limpar();
+  el.btnMicrofone.textContent = 'Começar a escutar';
+  el.btnMicrofone.classList.remove('gravando');
+  el.parcialFirme.textContent = '';
+  el.parcialSolto.textContent = '';
+
+  if (!statusVoz.modelosBaixados.includes(modeloDoIdioma())) {
+    el.btnMicrofone.disabled = true;
+    avisar(`Baixe o reconhecimento em ${metaDoIdioma().nome.toLowerCase()} para continuar.`, 'erro');
+    return;
+  }
+
+  el.btnMicrofone.disabled = false;
+  await alternarEscuta();
 }
 
 // ============================================================== historico ====
@@ -678,9 +693,10 @@ function desenharHistorico() {
 
 function salvar() {
   window.api.salvarConfig({
-    motor: el.motor.value, idioma: el.idioma.value, voz: el.voz.value,
+    motor: el.motor.value, idioma: idiomaAtual(), voz: el.voz.value,
+    vozPorIdioma,
     saida: el.saida.value, monitor: el.monitor.value, monitorar: el.monitorar.checked,
-    microfone: el.microfone.value, modeloVoz: el.modeloVoz.value,
+    microfone: el.microfone.value,
     pausa: Number(el.pausa.value),
     velocidade: Number(el.velocidade.value), tom: Number(el.tom.value),
     volume: Number(el.volume.value),
@@ -771,9 +787,11 @@ async function iniciar() {
   if (config.pausa !== undefined) el.pausa.value = config.pausa;
   if (config.monitorar) el.monitorar.checked = true;
   historico = Array.isArray(config.historico) ? config.historico : [];
+  vozPorIdioma = config.vozPorIdioma && typeof config.vozPorIdioma === 'object' ? config.vozPorIdioma : {};
 
   atualizarValores();
   desenharHistorico();
+  marcarIdioma('en');
 
   await carregarDispositivos();
   if (config.saida) el.saida.value = config.saida;
@@ -782,17 +800,14 @@ async function iniciar() {
   el.monitor.disabled = !el.monitorar.checked;
 
   await carregarVozes();
-  if (config.idioma) {
-    el.idioma.value = config.idioma;
-    filtrarVozes();
-  }
+  if (config.idioma) marcarIdioma(config.idioma);
+  else if (config.modeloVoz) marcarIdioma(config.modeloVoz);
+  idiomaAnterior = idiomaAtual();
+  filtrarVozes();
   if (config.voz) el.voz.value = config.voz;
+  vozPorIdioma[idiomaAtual()] = el.voz.value;
 
-  const status = await verificarModelosVoz();
-  if (config.modeloVoz && status.modelosBaixados.includes(config.modeloVoz)) {
-    el.modeloVoz.value = config.modeloVoz;
-    atualizarEscolhaDeModelo();
-  }
+  await verificarModelosVoz();
 
   el.texto.focus();
 }
@@ -821,12 +836,18 @@ el.motor.addEventListener('change', async () => {
   if (modo === 'vivo') trocarModo('vivo');
   salvar();
 });
-el.idioma.addEventListener('change', () => { filtrarVozes(); salvar(); });
-el.voz.addEventListener('change', salvar);
+el.idioma.addEventListener('click', (e) => {
+  const botao = e.target.closest('.escolha-opcao');
+  if (!botao || botao.dataset.idioma === idiomaAtual()) return;
+  aoMudarIdioma(botao.dataset.idioma);
+});
+el.voz.addEventListener('change', () => {
+  vozPorIdioma[idiomaAtual()] = el.voz.value;
+  salvar();
+});
 el.saida.addEventListener('change', salvar);
 el.monitor.addEventListener('change', salvar);
 el.microfone.addEventListener('change', () => { avaliarMicrofone(); salvar(); });
-el.modeloVoz.addEventListener('change', () => { atualizarEscolhaDeModelo(); salvar(); });
 
 el.monitorar.addEventListener('change', () => {
   el.monitor.disabled = !el.monitorar.checked;
@@ -867,9 +888,11 @@ el.btnInstalarPiper.addEventListener('click', async () => {
     await carregarVozes();
     // Foi por ela que o download aconteceu, entao ja deixa ela escolhida.
     if (vozes.some((v) => v.id === VOZ_INGLES)) {
-      el.idioma.value = 'en-US';
+      marcarIdioma('en');
+      idiomaAnterior = 'en';
       filtrarVozes();
       el.voz.value = VOZ_INGLES;
+      vozPorIdioma.en = VOZ_INGLES;
       salvar();
     }
     avisar('Voz em inglês instalada.');
@@ -881,7 +904,7 @@ el.btnInstalarVoz.addEventListener('click', async () => {
     botao: el.btnInstalarVoz, barra: el.barraVoz,
     preenchida: el.barraVozPreenchida, texto: el.textoProgressoVoz,
     aoProgresso: window.api.aoProgressoVoz,
-    executar: () => window.api.vozInstalarModelo(el.modeloVoz.value || 'multi'),
+    executar: () => window.api.vozInstalarModelo(modeloDoIdioma()),
   });
   if (ok) {
     avisar('Reconhecimento instalado.');
