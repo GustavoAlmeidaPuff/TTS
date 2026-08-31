@@ -141,10 +141,11 @@ async function sintetizar(texto, reforco = 0) {
 /**
  * Fila de fala do modo ao vivo.
  *
- * O ponto aqui e que sintetizar e tocar acontecem AO MESMO TEMPO: enquanto o
- * trecho 1 esta tocando, o trecho 2 ja esta sendo sintetizado. Em serie a fila
- * cresceria sem parar, porque os trechos chegam mais rapido do que a soma de
- * "sintetizar + falar" de cada um.
+ * Cada item e uma frase inteira, do jeito que o reconhecedor fechou.
+ *
+ * O ponto aqui e que sintetizar e tocar acontecem AO MESMO TEMPO: enquanto a
+ * frase 1 esta tocando, a frase 2 ja esta sendo sintetizada. Em serie a fila
+ * cresceria sem parar quando voce emenda uma frase na outra.
  *
  * Tocar continua estritamente em ordem -- so a sintese e adiantada.
  */
@@ -171,18 +172,6 @@ const fila = (window.__fila = {
 
   /** Quantas palavras no maximo entram num unico pedido de sintese. */
   MAX_PALAVRAS: 9,
-
-  /**
-   * Acrescimo de velocidade da fala no modo ao vivo, em pontos percentuais.
-   *
-   * Medido: lendo trechos soltos na velocidade normal, o TTS gasta 1,30x o
-   * tempo que voce gastou falando -- e o atraso cresce sem parar. A +25% cai
-   * pra 1,11x, e o resto o acelerador da fila cobre.
-   *
-   * E velocidade NATIVA (o Piper gera mais rapido), que soa bem melhor do que
-   * acelerar a reproducao depois.
-   */
-  REFORCO: 25,
 
   async _bombearSintese() {
     if (this.sintetizando) return;
@@ -216,7 +205,7 @@ const fila = (window.__fila = {
 
     this.sintetizando = true;
     try {
-      alvo.blob = await sintetizar(alvo.texto, this.REFORCO);
+      alvo.blob = await sintetizar(alvo.texto);
     } catch (e) {
       alvo.falhou = true;
       avisar(e.message, 'erro');
@@ -252,20 +241,15 @@ const fila = (window.__fila = {
   /**
    * Acelera a fala quando a fila enche, e volta ao normal quando alcanca.
    *
-   * Isso existe porque o TTS lendo trechos soltos gasta ~1,2x o tempo que voce
-   * gastou falando eles -- medido. Sem compensar, a diferenca se acumula e o
-   * atraso cresce sem limite; num stream longo viraria minutos.
+   * Esperando a frase acabar, a fala de volta comeca depois da sua e leva mais
+   * ou menos o mesmo tempo -- entao quem fala em frases separadas nunca acumula
+   * atraso, e ouve a voz na velocidade natural.
    *
-   * Acelerar so quando ha fila mantem a voz natural na conversa normal (onde
-   * suas pausas ja dao a folga) e so aperta o passo quando voce emenda.
+   * Quem emenda uma frase na outra sem respirar e que acumula: a fila enche
+   * enquanto a anterior ainda esta sendo falada. Ai vale apertar o passo.
    */
   _ritmo() {
-    // Comeca ja um pouco acima de 1 mesmo com a fila vazia. Sem essa pressao
-    // constante o sistema encontra um equilibrio ATRASADO em vez de alcancar:
-    // o acelerador so reagia depois da fila encher, e ai ela nunca esvaziava.
-    // 1,1x quase nao se nota; 1,5x soa apressado, mas so acontece quando voce
-    // fala sem respirar.
-    return Math.min(1.5, 1.1 + this.itens.length * 0.12);
+    return Math.min(1.5, 1 + this.itens.length * 0.12);
   },
 
   limpar() {
@@ -559,8 +543,8 @@ async function carregarVozes() {
   }
 
   const idiomas = [...new Set(vozes.map((v) => v.lingua))].sort((a, b) => {
-    if (a === 'pt-BR') return -1;
-    if (b === 'pt-BR') return 1;
+    if (a.startsWith('en')) return -1;
+    if (b.startsWith('en')) return 1;
     return a.localeCompare(b);
   });
 
@@ -730,8 +714,7 @@ function trocarModo(novo) {
       el.dicaVivo.textContent = 'Troque o motor para Piper: o Edge depende da internet e atrasa demais aqui.';
       el.dicaVivo.classList.add('alerta-texto');
     } else {
-      el.dicaVivo.textContent =
-        'Fale e a voz sai sozinha, sem esperar você terminar. (fala 25% mais rápida aqui, pra conseguir acompanhar)';
+      el.dicaVivo.textContent = 'Fale à vontade: cada frase sai depois que você faz uma pausa.';
       el.dicaVivo.classList.remove('alerta-texto');
     }
   } else if (microfone.ligado) {
@@ -842,11 +825,18 @@ el.btnInstalarPiper.addEventListener('click', async () => {
     botao: el.btnInstalarPiper, barra: el.barraPiper,
     preenchida: el.barraPiperPreenchida, texto: el.textoProgressoPiper,
     aoProgresso: window.api.aoProgressoPiper,
-    executar: () => window.api.piperInstalar('pt_BR-faber-medium'),
+    executar: () => window.api.piperInstalar(VOZ_INGLES),
   });
   if (ok) {
-    avisar('Motor offline instalado.');
     await carregarVozes();
+    // Foi por ela que o download aconteceu, entao ja deixa ela escolhida.
+    if (vozes.some((v) => v.id === VOZ_INGLES)) {
+      el.idioma.value = 'en-US';
+      filtrarVozes();
+      el.voz.value = VOZ_INGLES;
+      salvar();
+    }
+    avisar('Voz em inglês instalada.');
   }
 });
 
