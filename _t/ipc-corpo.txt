@@ -1,0 +1,94 @@
+
+ipcMain.handle('tts:motores', async () => motores.listarMotores());
+
+ipcMain.handle('tts:vozes', async (_evento, motor) => {
+  try {
+    return { ok: true, vozes: await motores.listarVozes(motor) };
+  } catch (e) {
+    return { ok: false, erro: e.message };
+  }
+});
+
+ipcMain.handle('tts:falar', async (_evento, pedido) => {
+  try {
+    const { audio, mime } = await motores.sintetizar(pedido);
+    // Buffer vira Uint8Array na travessia pro renderer; o lado de la remonta o Blob.
+    return { ok: true, audio: new Uint8Array(audio), mime };
+  } catch (e) {
+    return { ok: false, erro: e.message };
+  }
+});
+
+ipcMain.handle('piper:status', async () => motores.piper.status());
+
+ipcMain.handle('piper:instalar', async (evento, idVoz) => {
+  try {
+    await motores.piper.instalar(idVoz, (progresso) => {
+      evento.sender.send('piper:progresso', progresso);
+    });
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, erro: e.message };
+  }
+});
+
+// ---------------------------------------------------------------- voz ao vivo
+
+ipcMain.handle('voz:modelos', async () => modelosVoz.status());
+
+ipcMain.handle('voz:instalarModelo', async (evento, id) => {
+  try {
+    await modelosVoz.instalar(id, (p) => evento.sender.send('voz:progresso', p));
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, erro: e.message };
+  }
+});
+
+ipcMain.handle('voz:iniciar', async (evento, opcoes) => {
+  try {
+    sessaoVoz.removeAllListeners();
+    // Repassa pra interface sem passar pelo `invoke`: sao eventos que nascem
+    // aqui, nao respostas a um pedido de la.
+    const paraTela = (canal) => (dados) => {
+      if (!evento.sender.isDestroyed()) evento.sender.send(canal, dados);
+    };
+    sessaoVoz.on('trecho', paraTela('voz:trecho'));
+    sessaoVoz.on('parcial', paraTela('voz:parcial'));
+    sessaoVoz.on('fimDeTrecho', paraTela('voz:fimDeTrecho'));
+
+    return { ok: true, ...sessaoVoz.iniciar(opcoes) };
+  } catch (e) {
+    return { ok: false, erro: e.message };
+  }
+});
+
+ipcMain.handle('voz:parar', async () => {
+  sessaoVoz.parar();
+  return { ok: true };
+});
+
+ipcMain.handle('voz:estado', async () => sessaoVoz.estado());
+
+// Chega ~10 vezes por segundo enquanto o microfone esta ligado, entao e `on`
+// e nao `handle`: nao ha resposta pra esperar, e cada ida e volta custaria caro.
+ipcMain.on('voz:audio', (_evento, amostras) => {
+  try {
+    sessaoVoz.alimentar(amostras instanceof Float32Array ? amostras : new Float32Array(amostras));
+  } catch (e) {
+    console.error('falha ao processar audio do microfone:', e.message);
+  }
+});
+
+ipcMain.on('voz:encerrarTrecho', () => sessaoVoz.encerrarTrecho());
+
+// ------------------------------------------------------------------- ajustes
+
+ipcMain.handle('config:ler', async () => lerConfig());
+ipcMain.handle('config:salvar', async (_evento, config) => salvarConfig(config));
+
+ipcMain.handle('app:abrirLink', async (_evento, url) => {
+  // So deixo abrir o que eu mesmo coloquei na interface.
+  const permitidos = ['https://vb-audio.com/Cable/', 'https://github.com/rhasspy/piper'];
+  if (permitidos.includes(url)) await shell.openExternal(url);
+});

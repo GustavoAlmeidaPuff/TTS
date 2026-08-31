@@ -1,6 +1,9 @@
 node_modules/
 dist/
-build/
 *.log
-.env
 
+# saidas dos testes
+testes/*.png
+testes/*.json
+testes/*.mp3
+testes/*.wav

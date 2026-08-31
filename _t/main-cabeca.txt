@@ -1,0 +1,103 @@
+'use strict';
+
+const { app, BrowserWindow, ipcMain, session, shell, globalShortcut } = require('electron');
+const path = require('path');
+const fs = require('fs');
+
+const motores = require('./tts');
+const { Sessao, modelos: modelosVoz } = require('./voz');
+
+// Fixa o nome antes de perguntar qualquer caminho. Sem isso o Electron chama o
+// app de "Electron" quando iniciado por arquivo em vez de por pasta, e o Piper
+// procura os modelos numa pasta diferente da que baixou.
+app.setName('voz-tts');
+const pastaMotores = path.join(app.getPath('userData'), 'motores');
+motores.piper.definirRaiz(pastaMotores);
+modelosVoz.definirRaiz(pastaMotores);
+
+/** Sessao de voz ao vivo (microfone -> texto). Uma so, criada sob demanda. */
+const sessaoVoz = new Sessao();
+
+const ehDev = process.argv.includes('--dev');
+let janela = null;
+
+// ---------------------------------------------------------------- preferencias
+
+const arquivoConfig = () => path.join(app.getPath('userData'), 'config.json');
+
+function lerConfig() {
+  try {
+    return JSON.parse(fs.readFileSync(arquivoConfig(), 'utf8'));
+  } catch (_) {
+    return {};
+  }
+}
+
+function salvarConfig(config) {
+  try {
+    fs.mkdirSync(path.dirname(arquivoConfig()), { recursive: true });
+    fs.writeFileSync(arquivoConfig(), JSON.stringify(config, null, 2), 'utf8');
+    return true;
+  } catch (e) {
+    console.error('nao consegui salvar config:', e.message);
+    return false;
+  }
+}
+
+// ---------------------------------------------------------------------- janela
+
+function criarJanela() {
+  janela = new BrowserWindow({
+    width: 1060,
+    height: 760,
+    minWidth: 720,
+    minHeight: 560,
+    backgroundColor: '#12141a',
+    title: 'Voz TTS',
+    autoHideMenuBar: true,
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: false,
+    },
+  });
+
+  janela.loadFile(path.join(__dirname, '..', 'src', 'index.html'));
+  if (ehDev) janela.webContents.openDevTools({ mode: 'detach' });
+
+  // Links externos abrem no navegador de verdade, nunca dentro do app.
+  janela.webContents.setWindowOpenHandler(({ url }) => {
+    shell.openExternal(url);
+    return { action: 'deny' };
+  });
+
+  janela.on('closed', () => {
+    janela = null;
+  });
+}
+
+app.whenReady().then(() => {
+  // Sem isso o Chromium esconde os nomes dos dispositivos de audio, e a lista
+  // de saidas vira "Dispositivo 1, Dispositivo 2" -- inutil pra escolher o cabo.
+  session.defaultSession.setPermissionRequestHandler((_conteudo, permissao, permitir) => {
+    permitir(permissao === 'media' || permissao === 'audioCapture');
+  });
+
+  criarJanela();
+
+  // Ctrl+Shift+Espaco fala o que estiver na caixa, mesmo com o app atras do jogo.
+  const registrou = globalShortcut.register('CommandOrControl+Shift+Space', () => {
+    if (janela) janela.webContents.send('atalho:falar');
+  });
+  if (!registrou) console.warn('nao consegui registrar o atalho global');
+
+  app.on('activate', () => {
+    if (BrowserWindow.getAllWindows().length === 0) criarJanela();
+  });
+});
+
+app.on('will-quit', () => globalShortcut.unregisterAll());
+app.on('window-all-closed', () => {
+  if (process.platform !== 'darwin') app.quit();
+});

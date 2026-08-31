@@ -1,0 +1,210 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; media-src 'self' blob:; style-src 'self'; script-src 'self'" />
+    <title>Voz TTS</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <header class="topo">
+      <div class="marca">
+        <span class="ponto" id="ponto-estado"></span>
+        <h1>Voz TTS</h1>
+      </div>
+
+      <nav class="abas" role="tablist">
+        <button class="aba ativa" id="aba-digitar" role="tab">Digitar</button>
+        <button class="aba" id="aba-vivo" role="tab">Ao vivo</button>
+      </nav>
+
+      <p class="estado" id="estado">Carregando…</p>
+    </header>
+
+    <main class="grade">
+      <!-- ------------------------------------------------ coluna da esquerda -->
+      <section class="painel painel-fala">
+        <!-- ============================ MODO DIGITAR ======================== -->
+        <div id="modo-digitar">
+          <label class="rotulo" for="texto">O que falar</label>
+          <textarea
+            id="texto"
+            placeholder="Digite aqui e aperte Ctrl+Enter…"
+            spellcheck="false"
+          ></textarea>
+
+          <div class="linha-acoes">
+            <button id="btn-falar" class="botao principal">
+              Falar <kbd>Ctrl</kbd><kbd>↵</kbd>
+            </button>
+            <button id="btn-parar" class="botao" disabled>Parar</button>
+            <span class="dica">
+              Atalho global: <kbd>Ctrl</kbd><kbd>Shift</kbd><kbd>Espaço</kbd>
+            </span>
+          </div>
+        </div>
+
+        <!-- ============================= MODO AO VIVO ======================= -->
+        <div id="modo-vivo" class="oculto">
+          <div id="vivo-instalar" class="aviso oculto">
+            <strong>O reconhecimento de voz ainda não foi baixado.</strong>
+            <p id="vivo-instalar-texto">
+              São cerca de 453 MB, uma vez só. Depois funciona sem internet, em
+              português e inglês, trocando de um pro outro sozinho.
+            </p>
+            <button class="botao pequeno" id="btn-instalar-voz">Baixar reconhecimento</button>
+            <div class="barra oculto" id="barra-voz"><div id="barra-voz-preenchida"></div></div>
+            <p class="miudo" id="texto-progresso-voz"></p>
+          </div>
+
+          <div id="vivo-pronto">
+            <div class="linha-acoes">
+              <button id="btn-microfone" class="botao principal">Começar a escutar</button>
+              <div class="medidor" title="volume do microfone">
+                <div id="medidor-preenchido"></div>
+              </div>
+              <span class="dica" id="dica-vivo">Fale e a voz sai sozinha, sem esperar você terminar.</span>
+            </div>
+
+            <label class="rotulo" for="microfone">Microfone</label>
+            <select id="microfone"></select>
+
+            <div class="transcricao">
+              <div class="cabecalho-secao">
+                <h2>O que você está falando</h2>
+                <span class="miudo" id="contador-atraso"></span>
+              </div>
+              <p class="parcial" id="parcial">
+                <span id="parcial-firme"></span><span id="parcial-solto"></span>
+              </p>
+            </div>
+
+            <div class="cabecalho-secao">
+              <h2>Trechos falados</h2>
+              <button id="btn-limpar-trechos" class="botao-texto">limpar</button>
+            </div>
+            <ul id="lista-trechos" class="lista-trechos">
+              <li class="vazio">Nada ainda. Clique em “Começar a escutar” e fale.</li>
+            </ul>
+          </div>
+        </div>
+
+        <!-- ===================== histórico (comum aos dois) ================= -->
+        <div class="historico" id="bloco-historico">
+          <div class="cabecalho-secao">
+            <h2>Frases recentes</h2>
+            <button id="btn-limpar-historico" class="botao-texto">limpar</button>
+          </div>
+          <ul id="lista-historico" class="lista-historico">
+            <li class="vazio">Nada ainda. O que você falar aparece aqui pra repetir com um clique.</li>
+          </ul>
+        </div>
+      </section>
+
+      <!-- -------------------------------------------------- coluna da direita -->
+      <aside class="painel painel-ajustes">
+        <div class="grupo">
+          <h2>Para onde vai a voz</h2>
+
+          <div id="aviso-cabo" class="aviso oculto">
+            <strong>Não achei um cabo de áudio virtual.</strong>
+            <p>
+              Áudio não sai por microfone — microfone é entrada. Pra outros programas
+              ouvirem essa voz como se fosse seu microfone, você precisa de um cabo
+              virtual: o app toca de um lado, o Discord escuta do outro.
+            </p>
+            <button class="botao pequeno" id="btn-baixar-cabo">Baixar o VB-CABLE (grátis)</button>
+            <p class="miudo">Depois de instalar, reinicie o Windows e volte aqui.</p>
+          </div>
+
+          <label class="rotulo" for="saida">Saída principal</label>
+          <select id="saida"></select>
+          <p class="miudo">
+            Escolha <em>CABLE Input</em> aqui, e no Discord/jogo escolha
+            <em>CABLE Output</em> como microfone.
+          </p>
+
+          <label class="alternador">
+            <input type="checkbox" id="monitorar" />
+            <span>Ouvir também no meu fone</span>
+          </label>
+          <select id="monitor" disabled></select>
+
+          <button id="btn-testar" class="botao pequeno">Testar saída</button>
+        </div>
+
+        <div class="grupo">
+          <h2>Voz</h2>
+
+          <label class="rotulo" for="motor">Motor</label>
+          <select id="motor"></select>
+          <p class="miudo" id="descricao-motor"></p>
+
+          <label class="rotulo" for="idioma">Idioma</label>
+          <select id="idioma"></select>
+
+          <label class="rotulo" for="voz">Voz</label>
+          <select id="voz"></select>
+
+          <div id="piper-instalar" class="aviso oculto">
+            <strong>O motor offline ainda não foi baixado.</strong>
+            <p>São cerca de 80 MB, uma vez só. Depois funciona sem internet.</p>
+            <button class="botao pequeno" id="btn-instalar-piper">Baixar voz offline</button>
+            <div class="barra oculto" id="barra-piper"><div id="barra-piper-preenchida"></div></div>
+            <p class="miudo" id="texto-progresso-piper"></p>
+          </div>
+        </div>
+
+        <!-- só faz sentido no modo ao vivo -->
+        <div class="grupo oculto" id="grupo-vivo">
+          <h2>Ajuste do ao vivo</h2>
+
+          <label class="rotulo deslizante" for="janela">
+            Cautela <output id="valor-janela">400 ms</output>
+          </label>
+          <input type="range" id="janela" min="150" max="900" step="50" value="400" />
+          <p class="miudo">
+            Quanto tempo esperar uma palavra “assentar” antes de falar. Menor
+            responde mais rápido e erra mais.
+          </p>
+
+          <label class="rotulo deslizante" for="margem">
+            Margem <output id="valor-margem">2 palavras</output>
+          </label>
+          <input type="range" id="margem" min="0" max="5" step="1" value="2" />
+          <p class="miudo">
+            Quantas palavras do fim segurar. O fim da frase é onde o
+            reconhecedor mais muda de ideia.
+          </p>
+
+          <label class="rotulo" for="modelo-voz">Reconhecedor</label>
+          <select id="modelo-voz"></select>
+          <p class="miudo" id="descricao-modelo"></p>
+        </div>
+
+        <div class="grupo">
+          <h2>Ajuste fino</h2>
+
+          <label class="rotulo deslizante" for="velocidade">
+            Velocidade <output id="valor-velocidade">0%</output>
+          </label>
+          <input type="range" id="velocidade" min="-50" max="50" step="5" value="0" />
+
+          <label class="rotulo deslizante" for="tom">
+            Tom <output id="valor-tom">0 Hz</output>
+          </label>
+          <input type="range" id="tom" min="-50" max="50" step="5" value="0" />
+
+          <label class="rotulo deslizante" for="volume">
+            Volume <output id="valor-volume">100%</output>
+          </label>
+          <input type="range" id="volume" min="10" max="100" step="5" value="100" />
+
+          <button id="btn-restaurar" class="botao-texto">restaurar padrões</button>
+        </div>
+      </aside>
+    </main>
+
+    <script src="renderer.js"></script>
+  </body>
+</html>

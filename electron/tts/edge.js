@@ -15,10 +15,19 @@ const crypto = require('crypto');
 const WebSocket = require('ws');
 
 const TOKEN_CLIENTE = '6A5AA1D4EAFF4E9FB37E23D68491D6F4';
-const VERSAO_CHROMIUM = '130.0.2849.68';
+
+// ATENCAO -- e daqui que vem o 403 quando um dia parar de funcionar.
+// A Microsoft recusa o handshake se essa versao ficar velha demais. Quando o
+// motor "edge" comecar a dar 403, atualize as duas linhas abaixo pra versao
+// atual do Edge estavel (veja em edge://version, ou copie de
+// https://github.com/rany2/edge-tts/blob/master/src/edge_tts/constants.py).
+// O motor "piper" e offline e nao sofre disso -- use ele se quiser paz.
+const VERSAO_CHROMIUM = '143.0.3650.75';
+const VERSAO_MAIOR = '143';
+
 const USER_AGENT =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) ' +
-  'Chrome/130.0.0.0 Safari/537.36 Edg/130.0.0.0';
+  `Chrome/${VERSAO_MAIOR}.0.0.0 Safari/537.36 Edg/${VERSAO_MAIOR}.0.0.0`;
 const ORIGEM = 'chrome-extension://jdiccldimpahbcfhkgcpaliehnbmgkfa';
 
 // Segundos entre 1601-01-01 (epoca do Windows) e 1970-01-01 (epoca Unix).
@@ -63,13 +72,17 @@ function montarSsml({ texto, voz, velocidade = 0, tom = 0, volume = 0 }) {
 }
 
 /**
- * Formatos de saida. O MP3 e o mais leve pra trafegar ate a interface; o
- * PCM cru serve pro modo de baixa latencia mais adiante.
+ * Formatos de saida.
+ *
+ * So estes tres funcionam -- testados um por um. Os formatos `raw-*-pcm` da
+ * documentacao da Azure NAO valem aqui: o endpoint do "ler em voz alta" fecha
+ * a conexao com codigo 1007 quando voce pede PCM cru. Quem precisa de PCM (o
+ * caminho de baixa latencia) usa o Piper, que ja entrega WAV.
  */
 const FORMATOS = {
   mp3: 'audio-24khz-48kbitrate-mono-mp3',
   mp3Alta: 'audio-24khz-96kbitrate-mono-mp3',
-  pcm: 'raw-24khz-16bit-mono-pcm',
+  opus: 'webm-24khz-16bit-mono-opus',
 };
 
 /**
@@ -192,6 +205,19 @@ function sintetizar({ texto, voz, velocidade = 0, tom = 0, volume = 0, formato =
         if (!pedacos.length) return encerrar(new Error('o servidor nao devolveu audio'));
         encerrar(null, Buffer.concat(pedacos));
       }
+    });
+
+    ws.on('unexpected-response', (_req, res) => {
+      if (res.statusCode === 403) {
+        return encerrar(
+          new Error(
+            'O servidor da Microsoft recusou a conexao (403). Quase sempre isso quer dizer ' +
+              `que a versao do Edge embutida no app (${VERSAO_CHROMIUM}) ficou velha. ` +
+              'Atualize VERSAO_CHROMIUM em electron/tts/edge.js, ou use o motor Piper (offline).'
+          )
+        );
+      }
+      encerrar(new Error(`servidor de voz respondeu HTTP ${res.statusCode}`));
     });
 
     ws.on('error', (e) => {
