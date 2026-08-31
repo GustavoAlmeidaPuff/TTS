@@ -3,7 +3,7 @@
 // O truque: o app gera a fala com o proprio Piper, e essa fala e injetada no
 // lugar do microfone. Ou seja, o app escuta a si mesmo. Com isso o teste
 // percorre o caminho inteiro de verdade -- worklet -> IPC -> reconhecedor ->
-// prefixo estavel -> fila -> sintese -> setSinkId -> play.
+// frase fechada na pausa -> fila -> sintese -> setSinkId -> play.
 //
 //   npx electron testes/ao-vivo.js [en|pt]
 const { app } = require('electron');
