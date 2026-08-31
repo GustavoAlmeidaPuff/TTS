@@ -4,12 +4,20 @@
  * Motor Piper: sintese de voz 100% offline, rodando na CPU.
  *
  * Diferente do motor Edge, aqui nao tem servidor, nao tem token e nao tem nada
- * pra quebrar quando a Microsoft mudar de ideia. A voz e um pouco menos natural,
- * mas e a rede de seguranca do app -- e e o caminho pro modo de baixa latencia
- * mais adiante, porque nao paga ida e volta de internet.
+ * pra quebrar quando a Microsoft mudar de ideia. E, por nao pagar ida e volta
+ * de rede, e o unico dos dois que serve pro modo ao vivo.
  *
- * O binario e os modelos nao vem no repositorio (sao ~21MB + ~60MB cada voz):
- * o app baixa sob demanda pra pasta de dados do usuario.
+ * ---------------------------------------------------------------------------
+ * Por que o processo fica vivo
+ * ---------------------------------------------------------------------------
+ * A versao anterior lancava um piper.exe por frase. Medindo o modo ao vivo,
+ * cada trecho custava ~750ms fixos -- e a frase INTEIRA levava 1146ms. Ou seja:
+ * quase todo o custo era carregar o modelo ONNX de novo, e nao sintetizar.
+ *
+ * Com um processo vivo por voz, isso vira: carrega uma vez (~1.4s) e depois
+ * cada trecho custa ~160-330ms. No modo ao vivo a diferenca decide se a fila
+ * acompanha voce ou vai ficando minutos pra tras.
+ * ---------------------------------------------------------------------------
  */
 
 const { spawn } = require('child_process');
@@ -17,7 +25,6 @@ const path = require('path');
 const fs = require('fs');
 const fsp = require('fs/promises');
 const os = require('os');
-const crypto = require('crypto');
 
 const { baixar, descompactarZip, existe } = require('../comum/baixador');
 
@@ -32,7 +39,6 @@ const CATALOGO = [
     nome: 'Faber',
     lingua: 'pt-BR',
     genero: 'Masculina',
-    qualidade: 'media',
     caminho: 'pt/pt_BR/faber/medium/pt_BR-faber-medium',
   },
   {
@@ -40,7 +46,6 @@ const CATALOGO = [
     nome: 'Edresson',
     lingua: 'pt-BR',
     genero: 'Masculina',
-    qualidade: 'baixa',
     caminho: 'pt/pt_BR/edresson/low/pt_BR-edresson-low',
   },
   {
@@ -48,13 +53,17 @@ const CATALOGO = [
     nome: 'Amy',
     lingua: 'en-US',
     genero: 'Feminina',
-    qualidade: 'media',
     caminho: 'en/en_US/amy/medium/en_US-amy-medium',
+  },
+  {
+    id: 'en_US-ryan-medium',
+    nome: 'Ryan',
+    lingua: 'en-US',
+    genero: 'Masculina',
+    caminho: 'en/en_US/ryan/medium/en_US-ryan-medium',
   },
 ];
 
-// A pasta de dados e injetada pelo index.js pra este modulo nao depender do
-// Electron (assim da pra testar ele com node puro).
 let raiz = path.join(os.homedir(), '.voz-tts');
 function definirRaiz(novaRaiz) {
   raiz = novaRaiz;
@@ -91,7 +100,9 @@ async function instalar(idVoz, aoProgresso) {
     await fsp.mkdir(pastaBinario(), { recursive: true });
     await descompactarZip(zip, pastaBinario());
     await fsp.rm(zip, { force: true });
-    if (!existe(caminhoExe())) throw new Error('o zip do Piper nao trouxe piper.exe onde eu esperava');
+    if (!existe(caminhoExe())) {
+      throw new Error('o zip do Piper nao trouxe piper.exe onde eu esperava');
+    }
   }
 
   const modelo = caminhoModelo(voz.id);
@@ -121,45 +132,212 @@ async function listarVozes() {
   }));
 }
 
+// ================================================== processos vivos por voz ==
+
+/** @type {Map<string, {proc: object, taxa: number, fila: Promise, ocioso: NodeJS.Timeout}>} */
+const vivos = new Map();
+
+/** Depois disso sem uso, o processo morre e devolve a memoria. */
+const OCIOSIDADE_MS = 3 * 60 * 1000;
+
+/** Pasta onde o Piper deixa os WAVs antes da gente ler e apagar. */
+const pastaSaida = () => path.join(os.tmpdir(), 'voz-tts-piper');
+
 /**
- * Sintetiza pra WAV.
- * O Piper controla velocidade por "length_scale": maior = mais lento. Converto
- * a escala de porcentagem da interface (-50..+50) pra esse fator.
+ * Contador GLOBAL, e nao por processo.
+ *
+ * A primeira versao contava por processo. Trocar de velocidade mata o processo
+ * e abre outro, o contador voltava a zero, e o pedido novo reusava o nome de um
+ * arquivo do processo anterior -- entao ele olhava um arquivo velho, que a
+ * limpeza do pedido antigo apagava embaixo dele ("o WAV sumiu no meio do
+ * caminho"). Nome de arquivo nao pode vir de estado que reinicia.
  */
-function sintetizar({ texto, voz, velocidade = 0 }) {
-  return new Promise((resolve, reject) => {
-    if (!existe(caminhoExe())) return reject(new Error('o motor Piper ainda nao foi baixado'));
-    const modelo = caminhoModelo(voz);
-    if (!existe(modelo)) return reject(new Error(`a voz ${voz} ainda nao foi baixada`));
+let sequencia = 0;
 
-    const escala = Math.min(2.5, Math.max(0.4, 1 / (1 + Number(velocidade) / 100)));
-    const saida = path.join(os.tmpdir(), `voz-tts-${crypto.randomBytes(6).toString('hex')}.wav`);
+function abrirProcesso(idVoz, velocidade) {
+  const escala = escalaDeComprimento(velocidade);
+  fs.mkdirSync(pastaSaida(), { recursive: true });
 
-    const proc = spawn(
-      caminhoExe(),
-      ['--model', modelo, '--output_file', saida, '--length_scale', String(escala)],
-      { cwd: path.dirname(caminhoExe()), windowsHide: true }
-    );
-
-    let erro = '';
-    proc.stderr.on('data', (d) => (erro += d));
-    proc.on('error', (e) => reject(new Error(`nao consegui rodar o Piper: ${e.message}`)));
-
-    proc.on('close', async (codigo) => {
+  // Restos de uma execucao que morreu no meio so ocupam disco. Mas apagar tudo
+  // seria pior que o problema: outra voz pode ter um pedido EM VOO agora, e o
+  // arquivo dele sumiria embaixo dele. Por isso so o que ja esta velho o
+  // bastante pra nao pertencer a ninguem.
+  const VELHO_MS = 60 * 1000;
+  try {
+    for (const arq of fs.readdirSync(pastaSaida())) {
+      const alvo = path.join(pastaSaida(), arq);
       try {
-        if (codigo !== 0) throw new Error(`Piper saiu com codigo ${codigo}: ${erro.slice(-300)}`);
-        const audio = await fsp.readFile(saida);
-        resolve(audio);
-      } catch (e) {
-        reject(e);
-      } finally {
-        fsp.rm(saida, { force: true }).catch(() => {});
-      }
-    });
+        if (Date.now() - fs.statSync(alvo).mtimeMs > VELHO_MS) fs.rmSync(alvo, { force: true });
+      } catch (_) { /* sumiu sozinho ou esta em uso */ }
+    }
+  } catch (_) { /* pasta nem existe ainda */ }
 
-    proc.stdin.write(texto);
-    proc.stdin.end();
+  const proc = spawn(
+    caminhoExe(),
+    [
+      '--model', caminhoModelo(idVoz),
+      // Com --json-input cada linha carrega o nome do arquivo de saida. Isso da
+      // um fim de trecho DETERMINISTICO: o arquivo apareceu, acabou.
+      //
+      // A primeira versao usava --output_raw e adivinhava o fim pelo cano ficar
+      // quieto. Funcionava com trechos curtos e cortava frases longas ao meio,
+      // porque o Piper faz uma pausa entre frases enquanto gera -- e a pausa era
+      // lida como "terminou". Palpite sobre borda de dado nao se conserta
+      // aumentando o limiar; se troca por um delimitador de verdade.
+      '--json-input',
+      // Sem isso o Piper cola 0.2s de silencio no fim de cada frase. Numa frase
+      // longa nao se nota; no modo ao vivo, com trechos de duas palavras, vira
+      // 1/5 do tempo de fala em silencio.
+      '--sentence_silence', '0',
+      '--length_scale', String(escala),
+      '--quiet',
+    ],
+    { cwd: path.dirname(caminhoExe()), windowsHide: true }
+  );
+
+  proc.stderr.resume(); // sem isso o buffer enche e o processo trava
+  proc.stdout.resume();
+  proc.on('error', () => vivos.delete(idVoz));
+  proc.on('exit', () => vivos.delete(idVoz));
+
+  return { proc, escala, fila: Promise.resolve(), ocioso: null };
+}
+
+/** O Piper mede velocidade ao contrario: maior = mais lento. */
+function escalaDeComprimento(velocidade) {
+  return Math.min(2.5, Math.max(0.4, 1 / (1 + Number(velocidade || 0) / 100)));
+}
+
+function agendarMorte(idVoz) {
+  const vivo = vivos.get(idVoz);
+  if (!vivo) return;
+  clearTimeout(vivo.ocioso);
+  vivo.ocioso = setTimeout(() => encerrarVoz(idVoz), OCIOSIDADE_MS);
+  vivo.ocioso.unref?.();
+}
+
+function encerrarVoz(idVoz) {
+  const vivo = vivos.get(idVoz);
+  if (!vivo) return;
+  clearTimeout(vivo.ocioso);
+  vivos.delete(idVoz);
+  try {
+    vivo.proc.stdin.end();
+    vivo.proc.kill();
+  } catch (_) {
+    /* ja morreu */
+  }
+}
+
+/** Derruba todos os processos. Chamado quando o app fecha. */
+function encerrarTudo() {
+  for (const id of [...vivos.keys()]) encerrarVoz(id);
+}
+
+/**
+ * Manda um pedido ao processo vivo e espera o WAV aparecer.
+ *
+ * O arquivo aparece no disco antes de estar completo, entao nao basta ele
+ * existir: espera-se o tamanho parar de crescer entre duas olhadas.
+ */
+function pedirAoProcesso(vivo, texto, limiteMs = 15000) {
+  const saida = path.join(pastaSaida(), `t${process.pid}-${sequencia++}-${Math.random().toString(36).slice(2, 8)}.wav`);
+
+  return new Promise((resolve, reject) => {
+    const t0 = Date.now();
+    let terminou = false;
+
+    const desistir = (mensagem) => {
+      if (terminou) return;
+      terminou = true;
+      vivo.proc.off('exit', aoMorrer);
+      fsp.rm(saida, { force: true }).catch(() => {});
+      reject(new Error(mensagem));
+    };
+
+    const aoMorrer = () => desistir('o processo do Piper morreu no meio da sintese');
+    vivo.proc.once('exit', aoMorrer);
+
+    const olhar = () => {
+      if (terminou) return;
+      if (Date.now() - t0 > limiteMs) return desistir('o Piper nao respondeu a tempo');
+
+      let tamanho;
+      try {
+        tamanho = fs.statSync(saida).size;
+      } catch (_) {
+        return setTimeout(olhar, 15); // ainda nao apareceu
+      }
+
+      // 44 bytes e so o cabecalho do WAV: ainda nao ha audio nenhum.
+      if (tamanho <= 44) return setTimeout(olhar, 15);
+
+      setTimeout(() => {
+        if (terminou) return;
+        let agora;
+        try {
+          agora = fs.statSync(saida).size;
+        } catch (_) {
+          return desistir('o WAV do Piper sumiu no meio do caminho');
+        }
+        if (agora !== tamanho) return olhar(); // ainda escrevendo
+
+        terminou = true;
+        vivo.proc.off('exit', aoMorrer);
+        fsp
+          .readFile(saida)
+          .then((wav) => {
+            fsp.rm(saida, { force: true }).catch(() => {});
+            resolve(wav);
+          })
+          .catch((e) => reject(e));
+      }, 30);
+    };
+
+    vivo.proc.stdin.write(
+      JSON.stringify({ text: texto.replace(/[\r\n]+/g, ' '), output_file: saida }) + '\n'
+    );
+    olhar();
   });
 }
 
-module.exports = { status, instalar, listarVozes, sintetizar, definirRaiz, CATALOGO };
+/**
+ * Sintetiza um texto em WAV.
+ *
+ * As chamadas para a mesma voz sao enfileiradas: um processo, um cano de
+ * stdout, entao dois pedidos ao mesmo tempo misturariam o audio dos dois.
+ */
+async function sintetizar({ texto, voz, velocidade = 0 }) {
+  if (!existe(caminhoExe())) throw new Error('o motor Piper ainda nao foi baixado');
+  if (!existe(caminhoModelo(voz))) throw new Error(`a voz ${voz} ainda nao foi baixada`);
+  if (!texto || !texto.trim()) throw new Error('texto vazio');
+
+  let vivo = vivos.get(voz);
+
+  // A velocidade e argumento de linha de comando, entao mudar de velocidade
+  // exige um processo novo.
+  if (vivo && vivo.escala !== escalaDeComprimento(velocidade)) {
+    encerrarVoz(voz);
+    vivo = null;
+  }
+  if (!vivo) {
+    vivo = abrirProcesso(voz, velocidade);
+    vivos.set(voz, vivo);
+  }
+
+  const pedido = vivo.fila.then(
+    () => pedirAoProcesso(vivo, texto),
+    () => pedirAoProcesso(vivo, texto)
+  );
+  // A fila nao pode quebrar quando um pedido falha, senao os proximos morrem junto.
+  vivo.fila = pedido.catch(() => {});
+
+  const wav = await pedido;
+  agendarMorte(voz);
+  return wav;
+}
+
+module.exports = {
+  status, instalar, listarVozes, sintetizar,
+  definirRaiz, encerrarTudo, CATALOGO,
+};

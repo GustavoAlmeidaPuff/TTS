@@ -123,6 +123,11 @@ const CASOS = {
       .map((li) => li.firstChild.textContent + ' | esperou ' + li.querySelector('.tempo').textContent)
       .reverse(),
     botaoMicrofone: document.getElementById('btn-microfone').textContent.trim(),
+    filaTamanho: window.__fila ? window.__fila.itens.length : 'sem sonda',
+    filaItens: window.__fila ? window.__fila.itens.map((i) => i.texto + (i.falhou ? ' [FALHOU]' : i.blob ? ' [pronto]' : ' [pendente]')) : [],
+    sintetizando: window.__fila ? window.__fila.sintetizando : null,
+    tocando: window.__fila ? window.__fila.tocando : null,
+    descartados: window.__fila ? window.__fila.descartados : null,
     gravando: document.getElementById('btn-microfone').classList.contains('gravando'),
   }))()`);
 

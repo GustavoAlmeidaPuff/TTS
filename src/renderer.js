@@ -71,8 +71,12 @@ function avisar(mensagem, tipo = '') {
 
 // ============================================================== reproducao ===
 
-/** Toca um blob nos destinos escolhidos e resolve quando terminar. */
-async function tocarBlob(blob) {
+/**
+ * Toca um blob nos destinos escolhidos e resolve quando terminar.
+ * @param {Blob} blob
+ * @param {number} [ritmo=1] velocidade de reproducao (o Chromium preserva o tom)
+ */
+async function tocarBlob(blob, ritmo = 1) {
   if (urlAtual) URL.revokeObjectURL(urlAtual);
   urlAtual = URL.createObjectURL(blob);
 
@@ -81,10 +85,12 @@ async function tocarBlob(blob) {
 
   audioPrincipal.src = urlAtual;
   audioPrincipal.volume = ganho;
+  audioPrincipal.playbackRate = ritmo;
 
   if (el.monitorar.checked && el.monitor.value) {
     audioMonitor.src = urlAtual;
     audioMonitor.volume = ganho;
+    audioMonitor.playbackRate = ritmo;
     destinos.push({ audio: audioMonitor, dispositivo: el.monitor.value, rotulo: 'monitor' });
   }
 
@@ -110,13 +116,17 @@ async function tocarBlob(blob) {
   );
 }
 
-/** Pede a sintese ao processo principal. */
-async function sintetizar(texto) {
+/**
+ * Pede a sintese ao processo principal.
+ * @param {string} texto
+ * @param {number} [reforco=0] acrescimo de velocidade, em pontos percentuais
+ */
+async function sintetizar(texto, reforco = 0) {
   const r = await window.api.falar({
     motor: el.motor.value,
     texto,
     voz: el.voz.value,
-    velocidade: Number(el.velocidade.value),
+    velocidade: Number(el.velocidade.value) + reforco,
     tom: Number(el.tom.value),
   });
   if (!r.ok) throw new Error(r.erro);
@@ -135,7 +145,9 @@ async function sintetizar(texto) {
  *
  * Tocar continua estritamente em ordem -- so a sintese e adiantada.
  */
-const fila = {
+// `window.__fila` e uma janelinha de diagnostico: os testes em testes/ leem o
+// estado da fila por ela pra provar que nada ficou preso no meio do caminho.
+const fila = (window.__fila = {
   itens: [],
   sintetizando: false,
   tocando: false,
@@ -154,16 +166,56 @@ const fila = {
     this._bombearSintese();
   },
 
+  /** Quantas palavras no maximo entram num unico pedido de sintese. */
+  MAX_PALAVRAS: 9,
+
+  /**
+   * Acrescimo de velocidade da fala no modo ao vivo, em pontos percentuais.
+   *
+   * Medido: lendo trechos soltos na velocidade normal, o TTS gasta 1,30x o
+   * tempo que voce gastou falando -- e o atraso cresce sem parar. A +25% cai
+   * pra 1,11x, e o resto o acelerador da fila cobre.
+   *
+   * E velocidade NATIVA (o Piper gera mais rapido), que soa bem melhor do que
+   * acelerar a reproducao depois.
+   */
+  REFORCO: 25,
+
   async _bombearSintese() {
     if (this.sintetizando) return;
-    const proximo = this.itens.find((i) => !i.blob && !i.falhou);
-    if (!proximo) return;
+    const inicio = this.itens.findIndex((i) => !i.blob && !i.falhou);
+    if (inicio === -1) return;
+
+    // Funde os trechos pendentes num pedido so.
+    //
+    // Duas palavras soltas viram ~0,9s de audio pra ~0,35s de fala, porque toda
+    // frase isolada carrega entrada, saida e prosodia de frase completa. Juntas,
+    // as mesmas palavras saem no ritmo de fala normal -- e o TTS ainda soa
+    // melhor, porque le uma frase em vez de sete pedacos.
+    //
+    // A fusao se regula sozinha: com voce em dia so ha um trecho pendente e nada
+    // e fundido (atraso minimo); atrasado, os pendentes se juntam e a fila
+    // recupera terreno.
+    let fim = inicio;
+    let palavras = 0;
+    while (fim < this.itens.length && !this.itens[fim].blob && !this.itens[fim].falhou) {
+      palavras += this.itens[fim].texto.trim().split(/\s+/).length;
+      fim++;
+      if (palavras >= this.MAX_PALAVRAS) break;
+    }
+
+    const lote = this.itens.slice(inicio, fim);
+    const alvo =
+      lote.length === 1
+        ? lote[0]
+        : { texto: lote.map((i) => i.texto).join(' '), blob: null, falhou: false, entrouEm: lote[0].entrouEm };
+    if (lote.length > 1) this.itens.splice(inicio, lote.length, alvo);
 
     this.sintetizando = true;
     try {
-      proximo.blob = await sintetizar(proximo.texto);
+      alvo.blob = await sintetizar(alvo.texto, this.REFORCO);
     } catch (e) {
-      proximo.falhou = true;
+      alvo.falhou = true;
       avisar(e.message, 'erro');
     }
     this.sintetizando = false;
@@ -183,9 +235,10 @@ const fila = {
     if (primeiro.falhou) return this._bombearReproducao();
 
     this.tocando = true;
-    registrarTrecho(primeiro.texto, Date.now() - primeiro.entrouEm);
+    const ritmo = this._ritmo();
+    registrarTrecho(primeiro.texto, Date.now() - primeiro.entrouEm, ritmo);
     try {
-      await tocarBlob(primeiro.blob);
+      await tocarBlob(primeiro.blob, ritmo);
     } catch (e) {
       avisar(e.message, 'erro');
     }
@@ -193,11 +246,30 @@ const fila = {
     this._bombearReproducao();
   },
 
+  /**
+   * Acelera a fala quando a fila enche, e volta ao normal quando alcanca.
+   *
+   * Isso existe porque o TTS lendo trechos soltos gasta ~1,2x o tempo que voce
+   * gastou falando eles -- medido. Sem compensar, a diferenca se acumula e o
+   * atraso cresce sem limite; num stream longo viraria minutos.
+   *
+   * Acelerar so quando ha fila mantem a voz natural na conversa normal (onde
+   * suas pausas ja dao a folga) e so aperta o passo quando voce emenda.
+   */
+  _ritmo() {
+    // Comeca ja um pouco acima de 1 mesmo com a fila vazia. Sem essa pressao
+    // constante o sistema encontra um equilibrio ATRASADO em vez de alcancar:
+    // o acelerador so reagia depois da fila encher, e ai ela nunca esvaziava.
+    // 1,1x quase nao se nota; 1,5x soa apressado, mas so acontece quando voce
+    // fala sem respirar.
+    return Math.min(1.5, 1.1 + this.itens.length * 0.12);
+  },
+
   limpar() {
     this.itens = [];
     this.descartados = 0;
   },
-};
+});
 
 // ============================================================ modo digitar ===
 
@@ -360,7 +432,7 @@ async function alternarEscuta() {
   avisar(`Escutando. (reconhecedor carregou em ${(r.carregouEmMs / 1000).toFixed(1)}s)`);
 }
 
-function registrarTrecho(texto, esperaMs) {
+function registrarTrecho(texto, esperaMs, ritmo = 1) {
   const vazio = el.listaTrechos.querySelector('.vazio');
   if (vazio) vazio.remove();
 
@@ -370,7 +442,7 @@ function registrarTrecho(texto, esperaMs) {
   span.textContent = texto;
   const tempo = document.createElement('span');
   tempo.className = 'tempo';
-  tempo.textContent = esperaMs + 'ms';
+  tempo.textContent = esperaMs + 'ms' + (ritmo > 1.01 ? '  ' + ritmo.toFixed(2) + 'x' : '');
   item.append(span, tempo);
   el.listaTrechos.prepend(item);
 
@@ -655,7 +727,8 @@ function trocarModo(novo) {
       el.dicaVivo.textContent = 'Troque o motor para Piper: o Edge depende da internet e atrasa demais aqui.';
       el.dicaVivo.classList.add('alerta-texto');
     } else {
-      el.dicaVivo.textContent = 'Fale e a voz sai sozinha, sem esperar você terminar.';
+      el.dicaVivo.textContent =
+        'Fale e a voz sai sozinha, sem esperar você terminar. (fala 25% mais rápida aqui, pra conseguir acompanhar)';
       el.dicaVivo.classList.remove('alerta-texto');
     }
   } else if (microfone.ligado) {

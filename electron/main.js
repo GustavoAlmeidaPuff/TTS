@@ -81,6 +81,9 @@ app.whenReady().then(() => {
 app.on('will-quit', () => {
   globalShortcut.unregisterAll();
   if (sessaoVoz) sessaoVoz.parar();
+  // Os processos do Piper ficam vivos entre as falas; sem isso sobrariam
+  // piper.exe orfaos depois de fechar o app.
+  motores.piper.encerrarTudo();
 });
 
 app.on('window-all-closed', () => {
