@@ -23,9 +23,10 @@
  * ---------------------------------------------------------------------------
  */
 
-const path = require('path');
-const fs = require('fs');
+// Primeira coisa do arquivo, de proposito: ver electron/comum/onnx.js.
+const { ort } = require('../../comum/onnx');
 
+const path = require('path');
 const sinal = require('./sinal');
 
 const TAXA_ENTRADA = 16000;
@@ -45,6 +46,8 @@ class Conversor {
     // e ate mais previsivel neles (sem custo de copia pra placa).
     this.provedorGerador = opcoes.provedorGerador || 'dml';
     this.provedorLeve = opcoes.provedorLeve || 'cpu';
+    // Ver o comentario em carregar(): mais threads deixa TUDO mais lento.
+    this.threads = opcoes.threads || 4;
 
     this.contentvec = null;
     this.rmvpe = null;
@@ -59,12 +62,31 @@ class Conversor {
   }
 
   async carregar(aoProgresso) {
-    const ort = require('onnxruntime-node');
     const abrir = async (caminho, provedor, rotulo) => {
       if (aoProgresso) aoProgresso({ rotulo: `carregando ${rotulo}`, porcento: null });
       return ort.InferenceSession.create(caminho, {
         executionProviders: [provedor],
         graphOptimizationLevel: 'all',
+
+        // ------------------------------------------------------------------
+        // ESTE TETO NAO E DETALHE: e a diferenca entre caber e nao caber.
+        //
+        // Sem ele, cada uma das tres sessoes abre um conjunto de threads do
+        // tamanho do processador (10 nucleos aqui), e o DirectML ainda segura
+        // nucleos em espera ativa enquanto a GPU trabalha. As tres brigam, e
+        // todas perdem. Medido, no mesmo bloco de 0,5s:
+        //
+        //            sem teto      com teto (4)
+        //   vec        109ms          29ms
+        //   rmvpe      152ms          24ms
+        //   gerador    516ms         221ms
+        //   fator      1,55x         0,55x   <- so o segundo cabe ao vivo
+        //
+        // Contraintuitivo e real: dar MENOS nucleos pra cada um deixa o
+        // conjunto quase 3x mais rapido.
+        // ------------------------------------------------------------------
+        intraOpNumThreads: this.threads,
+        interOpNumThreads: 1,
       });
     };
 
@@ -150,7 +172,6 @@ class Conversor {
    */
   async converter(amostras, opcoes = {}) {
     if (!this.gerador) throw new Error('o conversor ainda nao foi carregado');
-    const ort = require('onnxruntime-node');
 
     const t0 = Date.now();
     const conteudo = await this._conteudo(ort, amostras);

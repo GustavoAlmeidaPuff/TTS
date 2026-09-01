@@ -31,46 +31,42 @@ const { baixar, descompactarZip, existe } = require('../comum/baixador');
 const URL_BINARIO =
   'https://github.com/rhasspy/piper/releases/download/2023.11.14-2/piper_windows_amd64.zip';
 const BASE_VOZES = 'https://huggingface.co/rhasspy/piper-voices/resolve/main';
+const BASE_OVOS = 'https://huggingface.co/OpenVoiceOS';
 
-/** Catalogo enxuto. Cada voz sao dois arquivos: o modelo e o json de config. */
+function ovos(personagem, lingua, nome, genero) {
+  return {
+    id: `${lingua.replace('-', '_')}-${personagem}`,
+    nome,
+    lingua,
+    genero,
+    url: `${BASE_OVOS}/pipertts_${lingua}_${personagem}/resolve/main/${personagem}_${lingua}`,
+  };
+}
+
+function oficial(id, nome, lingua, genero, caminho) {
+  return { id, nome, lingua, genero, caminho };
+}
+
+/**
+ * Catalogo curado: qualidade media, os dois idiomas do app, e as poucas
+ * femininas que existem em portugues (o Piper oficial so tem masculinas).
+ */
 const CATALOGO = [
-  {
-    id: 'pt_BR-dii',
-    nome: 'Dii',
-    lingua: 'pt-BR',
-    genero: 'Feminina',
-    // Oficial do Piper so tem vozes masculinas em pt-BR. A Dii e a voz
-    // feminina do OpenVoiceOS, no mesmo formato ONNX que o piper.exe ja le.
-    url: 'https://huggingface.co/OpenVoiceOS/pipertts_pt-BR_dii/resolve/main/dii_pt-BR',
-  },
-  {
-    id: 'pt_BR-faber-medium',
-    nome: 'Faber',
-    lingua: 'pt-BR',
-    genero: 'Masculina',
-    caminho: 'pt/pt_BR/faber/medium/pt_BR-faber-medium',
-  },
-  {
-    id: 'pt_BR-edresson-low',
-    nome: 'Edresson',
-    lingua: 'pt-BR',
-    genero: 'Masculina',
-    caminho: 'pt/pt_BR/edresson/low/pt_BR-edresson-low',
-  },
-  {
-    id: 'en_US-amy-medium',
-    nome: 'Amy',
-    lingua: 'en-US',
-    genero: 'Feminina',
-    caminho: 'en/en_US/amy/medium/en_US-amy-medium',
-  },
-  {
-    id: 'en_US-ryan-medium',
-    nome: 'Ryan',
-    lingua: 'en-US',
-    genero: 'Masculina',
-    caminho: 'en/en_US/ryan/medium/en_US-ryan-medium',
-  },
+  ovos('dii', 'pt-BR', 'Dii', 'Feminina'),
+  ovos('dii', 'pt-PT', 'Dii (Portugal)', 'Feminina'),
+  oficial('pt_BR-faber-medium', 'Faber', 'pt-BR', 'Masculina', 'pt/pt_BR/faber/medium/pt_BR-faber-medium'),
+  oficial('pt_BR-cadu-medium', 'Cadu', 'pt-BR', 'Masculina', 'pt/pt_BR/cadu/medium/pt_BR-cadu-medium'),
+  oficial('pt_BR-jeff-medium', 'Jeff', 'pt-BR', 'Masculina', 'pt/pt_BR/jeff/medium/pt_BR-jeff-medium'),
+  ovos('miro', 'pt-BR', 'Miro', 'Masculina'),
+
+  oficial('en_US-amy-medium', 'Amy', 'en-US', 'Feminina', 'en/en_US/amy/medium/en_US-amy-medium'),
+  oficial('en_US-lessac-medium', 'Lessac', 'en-US', 'Feminina', 'en/en_US/lessac/medium/en_US-lessac-medium'),
+  oficial('en_US-kristin-medium', 'Kristin', 'en-US', 'Feminina', 'en/en_US/kristin/medium/en_US-kristin-medium'),
+  oficial('en_US-hfc_female-medium', 'HFC', 'en-US', 'Feminina', 'en/en_US/hfc_female/medium/en_US-hfc_female-medium'),
+  oficial('en_US-ryan-medium', 'Ryan', 'en-US', 'Masculina', 'en/en_US/ryan/medium/en_US-ryan-medium'),
+  oficial('en_US-joe-medium', 'Joe', 'en-US', 'Masculina', 'en/en_US/joe/medium/en_US-joe-medium'),
+  oficial('en_US-john-medium', 'John', 'en-US', 'Masculina', 'en/en_US/john/medium/en_US-john-medium'),
+  oficial('en_US-hfc_male-medium', 'HFC', 'en-US', 'Masculina', 'en/en_US/hfc_male/medium/en_US-hfc_male-medium'),
 ];
 
 let raiz = path.join(os.homedir(), '.voz-tts');
@@ -124,16 +120,17 @@ async function instalar(idVoz, aoProgresso) {
   }
 }
 
-/** Vozes prontas pra uso agora (so as ja baixadas). */
+/** Todas as vozes do catalogo. As que ainda nao foram baixadas vem com baixada: false. */
 async function listarVozes() {
   const { vozesBaixadas } = status();
-  return CATALOGO.filter((v) => vozesBaixadas.includes(v.id)).map((v) => ({
+  return CATALOGO.map((v) => ({
     id: v.id,
     nome: v.nome,
     lingua: v.lingua,
     genero: v.genero,
     personalidade: [],
     motor: 'piper',
+    baixada: vozesBaixadas.includes(v.id),
   }));
 }
 

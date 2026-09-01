@@ -1,6 +1,7 @@
 // Converte uma fala de verdade e mede tudo que da pra medir sem ouvir:
 // tempos, faixa de tom detectada, e se o audio saiu com nivel plausivel.
 // O julgamento final (soa bem?) so o ouvido faz -- por isso salva o WAV.
+require('../electron/comum/onnx'); // ordem: antes do sherpa
 const path = require('path');
 const fs = require('fs');
 const { Conversor, TAXA_ENTRADA } = require('../electron/voz/rvc');
@@ -54,7 +55,7 @@ const estatisticas = (a) => {
   // 1. Fala de origem (a "sua voz" no teste).
   const cache = path.join(__dirname, 'rvc-origem.wav');
   if (!fs.existsSync(cache)) {
-    fs.writeFileSync(cache, await piper.sintetizar({ texto: FRASE, voz: 'en_US-ryan-medium' }));
+    fs.writeFileSync(cache, await piper.sintetizar({ texto: FRASE, voz: 'en_US-amy-medium' }));
   }
   const origem = lerWav(fs.readFileSync(cache));
 
