@@ -231,6 +231,64 @@ function decodificarTom(saida, quadros, limiar = 0.03) {
 }
 
 /**
+ * Tapa buracos curtos na melodia.
+ *
+ * ---------------------------------------------------------------------------
+ * O defeito que isto conserta
+ * ---------------------------------------------------------------------------
+ * O detector de tom as vezes perde a voz por dois ou tres quadros (20-30ms) no
+ * meio de uma vogal continua, e devolve zero ali. Medido numa frase de 5s: 7
+ * buracos desses, 1,3 por segundo.
+ *
+ * Zero, pro gerador, nao quer dizer "nao sei" -- quer dizer "aqui nao ha voz".
+ * Entao ele troca a excitacao harmonica por ruido naquele instante e volta logo
+ * depois. Varias vezes por segundo, isso soa exatamente como voz com catarro.
+ *
+ * A saida e distinguir os dois casos:
+ *  - buraco CURTO cercado de voz  -> falha de deteccao: interpola e segue.
+ *  - buraco LONGO                 -> silencio ou consoante surda de verdade
+ *                                    (/s/, /f/), que PRECISA ficar sem tom.
+ *
+ * Tapar tudo seria pior que o problema: as consoantes surdas ganhariam tom e a
+ * fala ficaria com um zumbido contínuo por baixo.
+ * ---------------------------------------------------------------------------
+ *
+ * @param {Float32Array} f0
+ * @param {number} [maxBuraco=5] quadros (10ms cada) -- acima disso e silencio real
+ * @returns {{f0: Float32Array, tapados: number}}
+ */
+function taparBuracos(f0, maxBuraco = 5) {
+  const saida = Float32Array.from(f0);
+  let tapados = 0;
+  let i = 0;
+
+  while (i < saida.length) {
+    if (saida[i] !== 0) {
+      i++;
+      continue;
+    }
+
+    const inicio = i;
+    while (i < saida.length && saida[i] === 0) i++;
+    const fim = i; // primeiro quadro com voz depois do buraco
+
+    const cercado = inicio > 0 && fim < saida.length;
+    if (!cercado || fim - inicio > maxBuraco) continue;
+
+    // Rampa linear entre as bordas: a melodia atravessa o buraco sem degrau.
+    const antes = saida[inicio - 1];
+    const depois = saida[fim];
+    const passos = fim - inicio + 1;
+    for (let k = inicio; k < fim; k++) {
+      saida[k] = antes + ((depois - antes) * (k - inicio + 1)) / passos;
+    }
+    tapados++;
+  }
+
+  return { f0: saida, tapados };
+}
+
+/**
  * Quantiza f0 em 255 degraus na escala mel, que e o que o gerador espera na
  * entrada `pitch` (a entrada `pitchf` recebe o valor continuo).
  */
@@ -251,5 +309,5 @@ function tomGrosso(f0, fMin = 50, fMax = 1100) {
 
 module.exports = {
   fft, bancoMel, janelaHann, melEspectrograma,
-  decodificarTom, tomGrosso, hzParaMel, melParaHz,
+  decodificarTom, taparBuracos, tomGrosso, hzParaMel, melParaHz,
 };

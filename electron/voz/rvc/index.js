@@ -48,6 +48,9 @@ class Conversor {
     this.provedorLeve = opcoes.provedorLeve || 'cpu';
     // Ver o comentario em carregar(): mais threads deixa TUDO mais lento.
     this.threads = opcoes.threads || 4;
+    // Quadros de 10ms: acima disso e silencio de verdade, e tem que continuar sendo.
+    this.maxBuraco = opcoes.maxBuraco ?? 5;
+    this.ultimosBuracosTapados = 0;
 
     this.contentvec = null;
     this.rmvpe = null;
@@ -104,8 +107,30 @@ class Conversor {
     }
   }
 
+  /**
+   * Troca a voz alvo sem recarregar o resto.
+   *
+   * As duas redes pesadas (conteudo e melodia) nao dependem da voz: so o
+   * gerador muda. Recarregar so ele leva ~2s em vez dos ~5s de tudo, e e o que
+   * torna comparar vozes uma coisa rapida em vez de um reinicio.
+   */
+  async trocarGerador(caminho) {
+    const novo = await ort.InferenceSession.create(caminho, {
+      executionProviders: [this.provedorGerador],
+      graphOptimizationLevel: 'all',
+      intraOpNumThreads: this.threads,
+      interOpNumThreads: 1,
+    });
+    const velho = this.gerador;
+    this.gerador = novo;
+    this.arquivos.gerador = caminho;
+    // A taxa de saida pode ser outra nesta voz; deduz de novo na proxima conversao.
+    this.taxaSaida = null;
+    if (velho) await velho.release().catch(() => {});
+  }
+
   /** Extrai as caracteristicas de conteudo, ja no dobro de quadros. */
-  async _conteudo(ort, amostras) {
+  async _conteudo(amostras) {
     const r = await this.contentvec.run({
       source: new ort.Tensor('float32', amostras, [1, 1, amostras.length]),
     });
@@ -125,7 +150,7 @@ class Conversor {
   }
 
   /** Extrai a melodia (f0) em Hz, um valor a cada 10ms. */
-  async _melodia(ort, amostras) {
+  async _melodia(amostras) {
     const mel = sinal.melEspectrograma(amostras, {
       taxa: TAXA_ENTRADA, nFft: 1024, salto: 160, nMels: 128,
       filtros: this.filtrosMel, janela: this.janela,
@@ -149,8 +174,33 @@ class Conversor {
     });
 
     const [, quadrosSaida] = r.output.dims;
-    const f0 = sinal.decodificarTom(r.output.data, quadrosSaida);
-    return f0.subarray(0, mel.quadros); // corta o que era so preenchimento
+    const bruto = sinal.decodificarTom(r.output.data, quadrosSaida);
+    const cortado = bruto.subarray(0, mel.quadros); // tira o que era preenchimento
+
+    // Sem isto a voz sai com "catarro" -- ver taparBuracos() em sinal.js.
+    const { f0, tapados } = sinal.taparBuracos(cortado, this.maxBuraco);
+    this.ultimosBuracosTapados = tapados;
+    return f0;
+  }
+
+  /**
+   * A mediana das partes com voz, que e o "centro" da sua fala.
+   *
+   * Mediana e nao media de proposito: uma nota fora do lugar (um estalo, uma
+   * oitava detectada errada) desloca a media e nao desloca a mediana. Como este
+   * numero decide a transposicao, um erro aqui estraga a conversao inteira.
+   *
+   * @returns {number} Hz, ou 0 se nao houver voz suficiente
+   */
+  static tomMediano(f0) {
+    const comVoz = [];
+    // Fora dessa faixa nao e voz humana falando: e ruido ou erro de deteccao.
+    for (let i = 0; i < f0.length; i++) {
+      if (f0[i] >= 50 && f0[i] <= 600) comVoz.push(f0[i]);
+    }
+    if (comVoz.length < 5) return 0;
+    comVoz.sort((a, b) => a - b);
+    return comVoz[Math.floor(comVoz.length / 2)];
   }
 
   /** Estica ou corta a melodia pra casar com o numero de quadros de conteudo. */
@@ -174,17 +224,38 @@ class Conversor {
     if (!this.gerador) throw new Error('o conversor ainda nao foi carregado');
 
     const t0 = Date.now();
-    const conteudo = await this._conteudo(ort, amostras);
+    const conteudo = await this._conteudo(amostras);
     const tConteudo = Date.now() - t0;
 
     const t1 = Date.now();
-    let f0 = await this._melodia(ort, amostras);
+    let f0 = await this._melodia(amostras);
     const tMelodia = Date.now() - t1;
 
     f0 = Conversor._alinhar(f0, conteudo.quadros);
 
-    // Transpor a voz em semitons: multiplica a frequencia, sem tocar no resto.
-    const semitons = Number(opcoes.semitons || 0);
+    // A mediana da SUA voz, antes de qualquer transposicao.
+    const tomOriginal = Conversor.tomMediano(f0);
+
+    /**
+     * Transposicao.
+     *
+     * Isto nao e enfeite: e a diferenca entre a voz sair natural ou rouca.
+     * Cada modelo de voz foi treinado numa faixa de frequencia. Entregando uma
+     * melodia masculina (~120 Hz) a um modelo feminino (~200 Hz), o gerador
+     * trabalha fora do que conhece e o resultado sai forcado e rouco -- e
+     * exatamente o que se ouve quando se deixa a transposicao em zero.
+     *
+     * Com `tomAlvo`, a conta e feita sozinha a partir da sua voz, em vez de
+     * voce ter que descobrir o numero no ouvido.
+     */
+    let semitons = Number(opcoes.semitons || 0);
+    if (opcoes.tomAlvo && tomOriginal > 0) {
+      semitons = 12 * Math.log2(opcoes.tomAlvo / tomOriginal);
+      // Passar de duas oitavas nunca melhora: e sinal de deteccao errada
+      // (metade ou dobro da frequencia), e o corte evita um resultado grotesco.
+      semitons = Math.max(-24, Math.min(24, semitons));
+    }
+
     if (semitons !== 0) {
       const fator = Math.pow(2, semitons / 12);
       for (let i = 0; i < f0.length; i++) f0[i] *= fator;
@@ -222,6 +293,13 @@ class Conversor {
     return {
       audio,
       taxa: this.taxaSaida,
+      /** Diagnostico do tom: e o que explica uma conversao rouca. */
+      tom: {
+        seu: Math.round(tomOriginal),
+        alvo: opcoes.tomAlvo ? Math.round(opcoes.tomAlvo) : null,
+        semitons: +semitons.toFixed(1),
+        buracosTapados: this.ultimosBuracosTapados,
+      },
       tempos: {
         conteudo: tConteudo,
         melodia: tMelodia,

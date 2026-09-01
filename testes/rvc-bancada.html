@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8" />
+    <title>Bancada do RVC</title>
+    <link rel="stylesheet" href="../src/styles.css" />
+    <style>
+      body { padding: 0; }
+      .bancada {
+        max-width: 720px;
+        margin: 0 auto;
+        padding: 22px 24px 30px;
+        display: flex;
+        flex-direction: column;
+        gap: 18px;
+        overflow-y: auto;
+        height: 100vh;
+      }
+      h1 { font-size: 17px; margin: 0; }
+      .linha { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+      .grande { font-size: 15px; padding: 12px 22px; }
+      .painel { padding: 16px 18px; }
+      table { width: 100%; border-collapse: collapse; font-size: 13px; }
+      td { padding: 5px 0; border-bottom: 1px solid var(--borda); }
+      td:last-child {
+        text-align: right;
+        font-variant-numeric: tabular-nums;
+        color: var(--acento-forte);
+      }
+      tr:last-child td { border-bottom: none; font-weight: 600; }
+      .comparar { display: flex; gap: 10px; flex-wrap: wrap; }
+      .relogio { font-size: 30px; font-variant-numeric: tabular-nums; min-width: 70px; }
+      .passo {
+        display: flex; gap: 10px; font-size: 13px; color: var(--texto-fraco);
+        align-items: baseline;
+      }
+      .passo b { color: var(--texto); font-weight: 600; }
+    </style>
+  </head>
+  <body>
+    <div class="bancada">
+      <header class="linha" style="justify-content: space-between">
+        <h1>Bancada do RVC — troca de timbre</h1>
+        <span class="estado" id="estado">carregando os modelos…</span>
+      </header>
+
+      <div class="painel">
+        <div class="passo"><b>1.</b> Escolha seu microfone (o de verdade, não o cabo).</div>
+        <select id="microfone" style="margin-top: 8px"></select>
+
+        <div class="passo" style="margin-top: 14px"><b>2.</b> Grave uns 4 segundos falando normalmente.</div>
+        <div class="linha" style="margin-top: 8px">
+          <button id="btn-gravar" class="botao principal grande" disabled>Gravar</button>
+          <div class="medidor" style="height: 42px"><div id="medidor"></div></div>
+          <span class="relogio" id="relogio">0,0s</span>
+        </div>
+
+        <div class="passo" style="margin-top: 14px"><b>3.</b> Compare as duas.</div>
+        <div class="comparar" style="margin-top: 8px">
+          <button id="btn-original" class="botao" disabled>▶ Sua voz</button>
+          <button id="btn-convertido" class="botao principal" disabled>▶ Convertida</button>
+          <button id="btn-salvar" class="botao" disabled>Salvar as duas</button>
+        </div>
+      </div>
+
+      <div class="painel">
+        <label class="rotulo" for="voz-alvo">Voz alvo</label>
+        <select id="voz-alvo"></select>
+        <p class="miudo">
+          O timbre é do modelo, não de um ajuste. Se quiser outra “cara” de voz,
+          é aqui que muda — vale ouvir as três com a mesma gravação.
+        </p>
+
+        <label class="rotulo deslizante" for="alvo-hz" style="margin-top: 16px">
+          Quão aguda <output id="valor-alvo-hz">200 Hz</output>
+        </label>
+        <input type="range" id="alvo-hz" min="160" max="260" step="5" value="200" />
+        <p class="miudo">
+          Mais alto soa mais feminino, até certo ponto: passando de ~240 começa a
+          soar infantil e artificial. 200–220 é a faixa de fala feminina adulta.
+        </p>
+
+        <label class="alternador" style="margin-top: 16px">
+          <input type="checkbox" id="auto-tom" checked />
+          <span>Ajustar o tom sozinho (recomendado)</span>
+        </label>
+        <p class="miudo" id="explica-tom">
+          Mede a altura da sua voz e transpõe até a faixa em que a voz alvo foi
+          treinada. É o que evita o resultado rouco.
+        </p>
+
+        <div id="bloco-manual" style="opacity: 0.45; margin-top: 14px">
+          <label class="rotulo deslizante" for="semitons">
+            Tom manual <output id="valor-semitons">0 semitons</output>
+          </label>
+          <input type="range" id="semitons" min="-24" max="24" step="1" value="0" disabled />
+        </div>
+      </div>
+
+      <div class="painel">
+        <h2 style="font-size: 13px; margin: 0 0 10px">Quanto demorou</h2>
+        <table>
+          <tr><td>conteúdo (o que você disse)</td><td id="t-conteudo">—</td></tr>
+          <tr><td>melodia (sua entonação)</td><td id="t-melodia">—</td></tr>
+          <tr><td>gerador (a voz nova, na GPU)</td><td id="t-gerador">—</td></tr>
+          <tr><td>total / segundo de fala</td><td id="t-fator">—</td></tr>
+        </table>
+        <p class="miudo" id="nota-gpu" style="margin-top: 10px"></p>
+      </div>
+    </div>
+
+    <script src="rvc-bancada-tela.js"></script>
+  </body>
+</html>
