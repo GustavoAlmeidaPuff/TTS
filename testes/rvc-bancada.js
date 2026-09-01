@@ -6,7 +6,7 @@
 // sozinho, com voz humana de verdade (ate agora so testei com voz sintetica).
 require('../electron/comum/onnx'); // ordem obrigatoria -- ver o arquivo
 
-const { app, BrowserWindow, session, ipcMain } = require('electron');
+const { app, BrowserWindow, session, ipcMain, screen } = require('electron');
 const path = require('path');
 const fs = require('fs');
 
@@ -45,7 +45,7 @@ app.whenReady().then(async () => {
     contentvec: path.join(dir, 'vec-768-layer-12.onnx'),
     rmvpe: path.join(dir, 'rmvpe.onnx'),
     gerador: path.join(dir, `${VOZ}.onnx`),
-  });
+  }, { cacheDispositivo: path.join(dir, '..', 'gpu-escolhida.json') });
   await conversor.carregar();
   console.log('pronto. gerador em: ' + conversor.provedorGerador);
 
@@ -136,12 +136,22 @@ app.whenReady().then(async () => {
     }
   });
 
+  const display = screen.getPrimaryDisplay();
+  const { workArea } = display;
+  const largura = Math.min(800, workArea.width);
+  const altura = Math.min(900, workArea.height);
+  const x = Math.round(workArea.x + (workArea.width - largura) / 2);
+  const y = Math.round(workArea.y + (workArea.height - altura) / 2);
+
   const janela = new BrowserWindow({
-    width: 800,
-    height: 900,
+    x,
+    y,
+    width: largura,
+    height: altura,
     backgroundColor: '#12141a',
     title: 'Bancada do RVC',
     autoHideMenuBar: true,
+    show: true,
     webPreferences: {
       preload: path.join(__dirname, 'rvc-bancada-preload.js'),
       contextIsolation: true,
@@ -150,6 +160,9 @@ app.whenReady().then(async () => {
     },
   });
   janela.loadFile(path.join(__dirname, 'rvc-bancada.html'));
+  janela.show();
+  janela.focus();
+  janela.moveTop();
   janela.webContents.on('console-message', (_e, _n, m) => console.log('[tela] ' + m));
 });
 

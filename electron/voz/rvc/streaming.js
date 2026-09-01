@@ -47,6 +47,12 @@ class Streaming extends EventEmitter {
 
     this.amostrasPorBloco = Math.round(TAXA_ENTRADA * this.blocoS);
     this.amostrasContexto = Math.round(TAXA_ENTRADA * this.contextoS);
+    this.amostrasCruzamento = Math.round(TAXA_ENTRADA * this.cruzamentoS);
+    // Margem de sobra na janela. O conversor devolve alguns quadros a menos do
+    // que a duracao da entrada (o extrator de conteudo perde as bordas), entao
+    // pedir exatamente o necessario deixa faltando -- e o que faltava virava
+    // deriva: a saida encurtava 7,5% e a voz terminava antes da pessoa.
+    this.amostrasMargem = Math.round(TAXA_ENTRADA * 0.08);
 
     this._reiniciar();
   }
@@ -74,39 +80,53 @@ class Streaming extends EventEmitter {
     junto.set(amostras, this.pendente.length);
     this.pendente = junto;
 
-    if (this.pendente.length >= this.amostrasPorBloco) this._processar();
+    // Espera o bloco MAIS o pedaco extra que sera cruzado com o proximo.
+    if (this.pendente.length >= this.amostrasPorBloco + this.amostrasCruzamento + this.amostrasMargem) {
+      this._processar();
+    }
   }
 
   async _processar() {
     // Uma conversao por vez: sao a mesma GPU e a mesma sessao.
     if (this.ocupado) return;
 
-    const bloco = this.pendente.subarray(0, this.amostrasPorBloco);
+    // Converte [bloco | cruzamento], mas AVANCA so o bloco. Assim o pedaco do
+    // cruzamento e convertido duas vezes -- uma como cauda deste bloco, outra
+    // como cabeca do proximo -- e ha material de verdade pra sobrepor.
+    //
+    // A primeira versao segurava a cauda sem repor: cada bloco entregava menos
+    // audio do que consumia, e a saida ia encurtando 14,6%. Num minuto de fala
+    // a voz terminaria 9 segundos antes da pessoa.
+    const totalNovo = this.amostrasPorBloco + this.amostrasCruzamento + this.amostrasMargem;
+    const novoAudio = this.pendente.subarray(0, totalNovo);
     this.pendente = this.pendente.slice(this.amostrasPorBloco);
 
     this.ocupado = true;
     const t0 = Date.now();
 
     try {
-      // [contexto | bloco novo]
-      const janela = new Float32Array(this.contexto.length + bloco.length);
+      const janela = new Float32Array(this.contexto.length + novoAudio.length);
       janela.set(this.contexto);
-      janela.set(bloco, this.contexto.length);
+      janela.set(novoAudio, this.contexto.length);
 
       const r = await this.conversor.converter(janela, this.opcoesConversao || {});
       this.taxaSaida = r.taxa;
 
-      // Descarta a parte da saida que corresponde ao contexto.
       const escala = r.taxa / TAXA_ENTRADA;
       const inicioUtil = Math.round(this.contexto.length * escala);
-      let util = r.audio.subarray(Math.min(inicioUtil, r.audio.length));
+      const util = r.audio.subarray(Math.min(inicioUtil, r.audio.length));
 
-      util = this._costurar(util, Math.round(this.cruzamentoS * r.taxa));
+      // O alvo vem do que se QUER entregar, e nao do que sobrou -- assim um
+      // quadro a mais ou a menos na conversao nao vira deriva acumulada.
+      const nCruz = Math.round(this.amostrasCruzamento * escala);
+      const nBloco = Math.round(this.amostrasPorBloco * escala);
+      const pronto = this._costurar(util, nBloco, nCruz);
 
-      // O bloco de agora vira contexto do proximo.
-      const novoContexto = new Float32Array(this.contexto.length + bloco.length);
+      // O que foi consumido vira contexto do proximo -- so a parte que avancou.
+      const avancou = novoAudio.subarray(0, this.amostrasPorBloco);
+      const novoContexto = new Float32Array(this.contexto.length + avancou.length);
       novoContexto.set(this.contexto);
-      novoContexto.set(bloco, this.contexto.length);
+      novoContexto.set(avancou, this.contexto.length);
       this.contexto = novoContexto.slice(Math.max(0, novoContexto.length - this.amostrasContexto));
 
       this.blocos++;
@@ -115,7 +135,7 @@ class Streaming extends EventEmitter {
       if (gasto > orcamento) this.atrasados++;
 
       this.emit('audio', {
-        audio: util,
+        audio: pronto,
         taxa: r.taxa,
         gastoMs: gasto,
         folgaMs: Math.round(orcamento - gasto),
@@ -126,37 +146,43 @@ class Streaming extends EventEmitter {
     } finally {
       this.ocupado = false;
       // Chegou audio enquanto convertia: vai de novo, sem esperar o proximo.
-      if (this.pendente.length >= this.amostrasPorBloco) this._processar();
+      if (this.pendente.length >= totalNovo) this._processar();
     }
   }
 
   /**
-   * Costura o comeco deste bloco com a cauda do anterior.
+   * Mistura a cauda do bloco anterior na cabeca deste, e entrega um bloco
+   * inteiro.
    *
-   * Sem isso ha um degrau na emenda a cada bloco, que se ouve como um clique
-   * ritmado -- mais irritante que o proprio defeito que ele denuncia.
+   * `audio` cobre [bloco | cruzamento]. O cruzamento do fim e o MESMO trecho de
+   * tempo que a cabeca do proximo bloco vai cobrir -- e por isso os dois podem
+   * ser misturados sem perder nem repetir nada.
+   *
+   * @param {Float32Array} audio saida convertida, ja sem a parte do contexto
+   * @param {number} nBloco quantas amostras valem um bloco
+   * @param {number} nCruz  quantas amostras se sobrepoem
+   * @returns {Float32Array} exatamente nBloco amostras
    */
-  _costurar(audio, nCruz) {
+  _costurar(audio, nBloco, nCruz) {
     if (!nCruz || audio.length <= nCruz) {
       this.cauda = null;
-      return audio;
+      return Float32Array.from(audio);
     }
 
-    const saida = Float32Array.from(audio);
+    const saida = Float32Array.from(audio.subarray(0, nBloco));
 
-    if (this.cauda && this.cauda.length === nCruz) {
-      for (let i = 0; i < nCruz; i++) {
-        // Cosseno em vez de rampa reta: mantem a energia constante na emenda,
-        // entao nao se ouve um "afundado" no meio do cruzamento.
-        const t = i / nCruz;
-        const peso = 0.5 - 0.5 * Math.cos(Math.PI * t);
+    if (this.cauda && this.cauda.length >= nCruz) {
+      for (let i = 0; i < nCruz && i < saida.length; i++) {
+        // Cosseno em vez de rampa reta: as duas metades somam energia constante,
+        // entao nao se ouve um "afundado" no meio da emenda.
+        const peso = 0.5 - 0.5 * Math.cos((Math.PI * i) / nCruz);
         saida[i] = this.cauda[i] * (1 - peso) + saida[i] * peso;
       }
     }
 
-    // Guarda a cauda e nao a entrega ainda: ela sera misturada no proximo bloco.
-    this.cauda = saida.slice(saida.length - nCruz);
-    return saida.subarray(0, saida.length - nCruz);
+    // A cauda cobre o mesmo tempo que a cabeca do proximo bloco vai cobrir.
+    this.cauda = Float32Array.from(audio.subarray(nBloco, nBloco + nCruz));
+    return saida;
   }
 
   /** Ajustes repassados a cada conversao (voz alvo, tom etc). */

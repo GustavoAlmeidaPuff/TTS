@@ -7,7 +7,8 @@
   "scripts": {
     "start": "electron .",
     "dev": "electron . --dev",
-    "build": "electron-builder --win"
+    "build": "electron-builder --win",
+    "rvc": "electron testes/rvc-bancada.js"
   },
   "author": "Gustavo Almeida",
   "license": "MIT",

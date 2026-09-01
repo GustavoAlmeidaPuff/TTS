@@ -63,6 +63,8 @@ class Conversor {
     // null = descobre medindo na primeira carga. Ver _escolherGpu().
     this.dispositivo = opcoes.dispositivo !== undefined ? opcoes.dispositivo : null;
     this.gpusMedidas = [];
+    // Arquivo onde a escolha de GPU fica guardada entre execucoes.
+    this.cacheDispositivo = opcoes.cacheDispositivo || null;
     // Quadros de 10ms: acima disso e silencio de verdade, e tem que continuar sendo.
     this.maxBuraco = opcoes.maxBuraco ?? 5;
     // 1 = normal padrao, que e o que o gerador viu no treino.
@@ -113,18 +115,31 @@ class Conversor {
       });
     };
 
+    // A GPU e escolhida ANTES de abrir qualquer sessao.
+    //
+    // Na primeira versao isto vinha depois de carregar o ContentVec e o RMVPE --
+    // e como "this.dispositivo" ainda era null naquele instante, os dois iam
+    // pro dispositivo padrao (a Intel) enquanto so o gerador ia pra RTX. O
+    // sintoma era sutil: funcionava, mas gastava 590ms por bloco em vez de
+    // 330ms. Meia GPU certa e pior que nenhuma, porque parece que esta ok.
+    if (this.provedorGerador === 'dml' && this.dispositivo === null) {
+      try {
+        this.dispositivo = await this._escolherGpu(aoProgresso);
+      } catch (_) {
+        this.dispositivo = null; // sem sondagem, cai no padrao do sistema
+      }
+    }
+
     this.contentvec = await abrir(this.arquivos.contentvec, this.provedorLeve, 'o extrator de conteúdo');
     this.rmvpe = await abrir(this.arquivos.rmvpe, this.provedorLeve, 'o detector de melodia');
 
     try {
-      if (this.provedorGerador === 'dml' && this.dispositivo === null) {
-        this.dispositivo = await this._escolherGpu(aoProgresso);
-      }
       this.gerador = await abrir(this.arquivos.gerador, this.provedorGerador, 'a voz na GPU', this.threadsGerador);
     } catch (e) {
       // Sem GPU o app ainda converte, mas nao em tempo real -- e melhor dizer
       // isso do que fingir que esta tudo bem e travar o audio depois.
       this.provedorGerador = 'cpu';
+      this.dispositivo = null;
       this.gerador = await abrir(this.arquivos.gerador, 'cpu', 'a voz (sem GPU: vai ficar lento)', this.threads);
       this.semGpu = true;
     }
@@ -154,42 +169,50 @@ class Conversor {
    * @returns {Promise<number>} o indice do dispositivo mais rapido
    */
   async _escolherGpu(aoProgresso) {
-    if (aoProgresso) aoProgresso({ rotulo: 'procurando a placa de vídeo mais rápida', porcento: null });
-
-    const T = 50; // bloco minusculo: so pra comparar, nao pra usar
-    const entradas = () => ({
-      phone: new ort.Tensor('float32', new Float32Array(T * 768), [1, T, 768]),
-      phone_lengths: new ort.Tensor('int64', BigInt64Array.from([BigInt(T)]), [1]),
-      pitch: new ort.Tensor('int64', BigInt64Array.from({ length: T }, () => 180n), [1, T]),
-      pitchf: new ort.Tensor('float32', new Float32Array(T).fill(220), [1, T]),
-      ds: new ort.Tensor('int64', BigInt64Array.from([0n]), [1]),
-      rnd: new ort.Tensor('float32', new Float32Array(192 * T), [1, 192, T]),
-    });
-
-    let melhor = { dispositivo: 0, ms: Infinity };
-    this.gpusMedidas = [];
-
-    for (let dev = 0; dev < 4; dev++) {
-      let sessao = null;
+    // Sondar custa caro E deixa rastro: abrir e fechar quatro sessoes grandes
+    // na GPU deixa a placa num estado tal que a PRIMEIRA conversao seguinte
+    // levou 95 segundos num teste -- travando a fila inteira atras dela.
+    //
+    // Como a resposta nunca muda numa mesma maquina, ela e guardada em disco e
+    // a sondagem acontece uma vez na vida.
+    const fs = require('fs');
+    if (this.cacheDispositivo) {
       try {
-        sessao = await ort.InferenceSession.create(this.arquivos.gerador, {
-          executionProviders: [{ name: 'dml', deviceId: dev }],
-          graphOptimizationLevel: 'all',
-        });
-        await sessao.run(entradas()); // aquece: a primeira sempre mente
-        const t0 = Date.now();
-        await sessao.run(entradas());
-        await sessao.run(entradas());
-        const ms = (Date.now() - t0) / 2;
-
-        this.gpusMedidas.push({ dispositivo: dev, ms: Math.round(ms) });
-        if (ms < melhor.ms) melhor = { dispositivo: dev, ms };
+        const salvo = JSON.parse(fs.readFileSync(this.cacheDispositivo, 'utf8'));
+        if (Number.isInteger(salvo.dispositivo)) {
+          this.gpusMedidas = salvo.medidas || [];
+          return salvo.dispositivo;
+        }
       } catch (_) {
-        break; // acabaram os dispositivos
-      } finally {
-        if (sessao) await sessao.release().catch(() => {});
+        /* primeira vez, ou arquivo estragado: sonda de novo */
       }
     }
+
+    if (aoProgresso) {
+      aoProgresso({ rotulo: 'procurando a placa de vídeo mais rápida (só desta vez)', porcento: null });
+    }
+
+    const { execFile } = require('child_process');
+    const sonda = require('path').join(__dirname, 'sondar-gpu.js');
+
+    const resultado = await new Promise((resolve) => {
+      // ELECTRON_RUN_AS_NODE faz o electron.exe rodar como Node puro, sem abrir
+      // janela -- assim a sonda serve tanto dentro do app quanto fora dele.
+      execFile(
+        process.execPath,
+        [sonda, this.arquivos.gerador],
+        { env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' }, timeout: 120000 },
+        (erro, saida) => {
+          if (erro) return resolve(null);
+          try { resolve(JSON.parse(String(saida).trim())); } catch (_) { resolve(null); }
+        }
+      );
+    });
+
+    if (!resultado) return null; // sem sondagem: o sistema escolhe
+
+    this.gpusMedidas = resultado.medidas || [];
+    const melhor = { dispositivo: resultado.dispositivo };
 
     return melhor.dispositivo;
   }
