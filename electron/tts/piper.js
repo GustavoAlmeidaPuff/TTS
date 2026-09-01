@@ -35,6 +35,15 @@ const BASE_VOZES = 'https://huggingface.co/rhasspy/piper-voices/resolve/main';
 /** Catalogo enxuto. Cada voz sao dois arquivos: o modelo e o json de config. */
 const CATALOGO = [
   {
+    id: 'pt_BR-dii',
+    nome: 'Dii',
+    lingua: 'pt-BR',
+    genero: 'Feminina',
+    // Oficial do Piper so tem vozes masculinas em pt-BR. A Dii e a voz
+    // feminina do OpenVoiceOS, no mesmo formato ONNX que o piper.exe ja le.
+    url: 'https://huggingface.co/OpenVoiceOS/pipertts_pt-BR_dii/resolve/main/dii_pt-BR',
+  },
+  {
     id: 'pt_BR-faber-medium',
     nome: 'Faber',
     lingua: 'pt-BR',
@@ -106,16 +115,12 @@ async function instalar(idVoz, aoProgresso) {
   }
 
   const modelo = caminhoModelo(voz.id);
+  const origem = voz.url || `${BASE_VOZES}/${voz.caminho}`;
   if (!existe(modelo)) {
-    await baixar(`${BASE_VOZES}/${voz.caminho}.onnx`, modelo, aoProgresso, `voz ${voz.nome}`);
+    await baixar(`${origem}.onnx`, modelo, aoProgresso, `voz ${voz.nome}`);
   }
   if (!existe(`${modelo}.json`)) {
-    await baixar(
-      `${BASE_VOZES}/${voz.caminho}.onnx.json`,
-      `${modelo}.json`,
-      aoProgresso,
-      `ajustes da voz ${voz.nome}`
-    );
+    await baixar(`${origem}.onnx.json`, `${modelo}.json`, aoProgresso, `ajustes da voz ${voz.nome}`);
   }
 }
 

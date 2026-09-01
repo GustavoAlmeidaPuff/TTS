@@ -28,7 +28,9 @@ const el = {
 
   motor: $('motor'), descricaoMotor: $('descricao-motor'),
   idioma: $('idioma'), voz: $('voz'),
-  piperInstalar: $('piper-instalar'), btnInstalarPiper: $('btn-instalar-piper'),
+  piperInstalar: $('piper-instalar'), piperInstalarTitulo: $('piper-instalar-titulo'),
+  piperInstalarTexto: $('piper-instalar-texto'),
+  btnInstalarPiper: $('btn-instalar-piper'),
   barraPiper: $('barra-piper'), barraPiperPreenchida: $('barra-piper-preenchida'),
   textoProgressoPiper: $('texto-progresso-piper'),
 
@@ -60,6 +62,7 @@ let falando = false;
 let modo = 'digitar';
 /** Ultimo retrato do que ja foi baixado, pra decidir o que oferecer. */
 let statusVoz = { catalogo: [], modelosBaixados: [] };
+let statusPiper = { vozesBaixadas: [], binarioInstalado: false };
 /** Ultima voz usada em cada idioma, pra voltar nela ao alternar. */
 let vozPorIdioma = {};
 let idiomaAnterior = 'en';
@@ -67,6 +70,8 @@ let idiomaAnterior = 'en';
 const PADROES = { velocidade: 0, tom: 0, volume: 100 };
 /** O app esta montado pro ingles: e esta a voz que ele baixa e usa. */
 const VOZ_INGLES = 'en_US-amy-medium';
+const VOZ_PT_FEM = 'pt_BR-dii';
+const VOZ_PADRAO = { en: VOZ_INGLES, pt: VOZ_PT_FEM };
 const PADRAO_CABO = /(cable input|vb-audio|virtual cable|voicemeeter|virtual audio|vac\b)/i;
 
 /** Os dois unicos idiomas: cada um puxa o reconhecedor e as vozes juntos. */
@@ -99,6 +104,10 @@ function marcarIdioma(id) {
 
 function modeloDoIdioma() {
   return metaDoIdioma().modelo;
+}
+
+function vozPadraoDoIdioma(id = idiomaAtual()) {
+  return VOZ_PADRAO[id] || VOZ_INGLES;
 }
 
 function vozesDoIdioma(id = idiomaAtual()) {
@@ -564,11 +573,8 @@ async function carregarVozes() {
   }
 
   if (motor === 'piper') {
-    const status = await window.api.piperStatus();
-    // Ter uma voz qualquer nao basta: sem a voz inglesa, falar inglês com uma
-    // voz treinada em português sai com sotaque de leitura, palavra por palavra.
-    const temIngles = status.vozesBaixadas.includes(VOZ_INGLES);
-    el.piperInstalar.classList.toggle('oculto', Boolean(status.binarioInstalado && temIngles));
+    statusPiper = await window.api.piperStatus();
+    atualizarAvisoPiper();
   } else {
     el.piperInstalar.classList.add('oculto');
   }
@@ -584,12 +590,17 @@ async function carregarVozes() {
 }
 
 function filtrarVozes() {
-  const doIdioma = vozesDoIdioma();
+  const doIdioma = vozesDoIdioma().slice().sort((a, b) => {
+    if (a.genero === b.genero) return 0;
+    return a.genero === 'Feminina' ? -1 : 1;
+  });
+  const padrao = vozPadraoDoIdioma();
   const lembrada = vozPorIdioma[idiomaAtual()] || el.voz.value;
 
   el.voz.innerHTML = '';
   if (!doIdioma.length) {
     el.voz.innerHTML = '<option>nenhuma voz neste idioma</option>';
+    atualizarAvisoPiper();
     return;
   }
   for (const v of doIdioma) {
@@ -600,6 +611,26 @@ function filtrarVozes() {
     el.voz.appendChild(opcao);
   }
   if (doIdioma.some((v) => v.id === lembrada)) el.voz.value = lembrada;
+  else if (doIdioma.some((v) => v.id === padrao)) el.voz.value = padrao;
+  atualizarAvisoPiper();
+}
+
+function atualizarAvisoPiper() {
+  if (el.motor.value !== 'piper') {
+    el.piperInstalar.classList.add('oculto');
+    return;
+  }
+  const id = vozPadraoDoIdioma();
+  const pronta = (statusPiper.vozesBaixadas || []).includes(id);
+  el.piperInstalar.classList.toggle('oculto', Boolean(statusPiper.binarioInstalado && pronta));
+  const pt = idiomaAtual() === 'pt';
+  el.piperInstalarTitulo.textContent = pt
+    ? 'Falta a voz feminina em português do motor offline.'
+    : 'Falta a voz em inglês do motor offline.';
+  el.piperInstalarTexto.textContent = pt
+    ? 'São cerca de 60 MB, uma vez só. Depois funciona sem internet.'
+    : 'São cerca de 80 MB, uma vez só. Depois funciona sem internet.';
+  el.btnInstalarPiper.textContent = pt ? 'Baixar voz feminina' : 'Baixar voz em inglês';
 }
 
 async function verificarModelosVoz() {
@@ -630,6 +661,7 @@ async function aoMudarIdioma(novo) {
   filtrarVozes();
   vozPorIdioma[idiomaAtual()] = el.voz.value;
   atualizarEscolhaDeModelo();
+  atualizarAvisoPiper();
   salvar();
   try {
     if (microfone.ligado) await reiniciarEscuta();
@@ -878,24 +910,21 @@ el.btnLimparTrechos.addEventListener('click', () => {
 });
 
 el.btnInstalarPiper.addEventListener('click', async () => {
+  const id = vozPadraoDoIdioma();
   const ok = await instalarComProgresso({
     botao: el.btnInstalarPiper, barra: el.barraPiper,
     preenchida: el.barraPiperPreenchida, texto: el.textoProgressoPiper,
     aoProgresso: window.api.aoProgressoPiper,
-    executar: () => window.api.piperInstalar(VOZ_INGLES),
+    executar: () => window.api.piperInstalar(id),
   });
   if (ok) {
     await carregarVozes();
-    // Foi por ela que o download aconteceu, entao ja deixa ela escolhida.
-    if (vozes.some((v) => v.id === VOZ_INGLES)) {
-      marcarIdioma('en');
-      idiomaAnterior = 'en';
-      filtrarVozes();
-      el.voz.value = VOZ_INGLES;
-      vozPorIdioma.en = VOZ_INGLES;
+    if (vozes.some((v) => v.id === id)) {
+      el.voz.value = id;
+      vozPorIdioma[idiomaAtual()] = id;
       salvar();
     }
-    avisar('Voz em inglês instalada.');
+    avisar(idiomaAtual() === 'pt' ? 'Voz feminina em português instalada.' : 'Voz em inglês instalada.');
   }
 });
 
