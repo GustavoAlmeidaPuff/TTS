@@ -28,6 +28,7 @@
     }
   },
   "dependencies": {
+    "onnxruntime-node": "^1.29.0",
     "sherpa-onnx-node": "^1.13.6",
     "ws": "^8.21.3"
   }

@@ -1,6 +1,6 @@
 'use strict';
 
-const { app, BrowserWindow, session, shell, globalShortcut } = require('electron');
+const { app, BrowserWindow, session, shell, globalShortcut, screen } = require('electron');
 const path = require('path');
 
 // Fixa o nome antes de perguntar qualquer caminho. Sem isso o Electron chama o
@@ -22,14 +22,24 @@ let janela = null;
 let sessaoVoz = null;
 
 function criarJanela() {
+  const display = screen.getPrimaryDisplay();
+  const { workArea } = display;
+  const largura = Math.min(1100, workArea.width);
+  const altura = Math.min(800, workArea.height);
+  const x = Math.round(workArea.x + (workArea.width - largura) / 2);
+  const y = Math.round(workArea.y + (workArea.height - altura) / 2);
+
   janela = new BrowserWindow({
-    width: 1100,
-    height: 800,
+    x,
+    y,
+    width: largura,
+    height: altura,
     minWidth: 760,
     minHeight: 600,
     backgroundColor: '#12141a',
     title: 'Voz TTS',
     autoHideMenuBar: true,
+    show: true,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -38,8 +48,14 @@ function criarJanela() {
     },
   });
 
+  janela.once('ready-to-show', () => {
+    janela.show();
+    janela.focus();
+    janela.moveTop();
+  });
+
   janela.loadFile(path.join(__dirname, '..', 'src', 'index.html'));
-  if (ehDev) janela.webContents.openDevTools({ mode: 'detach' });
+  if (ehDev) janela.webContents.openDevTools({ mode: 'right' });
 
   // Links externos abrem no navegador de verdade, nunca dentro do app.
   janela.webContents.setWindowOpenHandler(({ url }) => {
