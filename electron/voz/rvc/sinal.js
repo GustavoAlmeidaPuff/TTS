@@ -289,6 +289,38 @@ function taparBuracos(f0, maxBuraco = 5) {
 }
 
 /**
+ * Ruido gaussiano (normal padrao), pelo metodo de Box-Muller.
+ *
+ * ---------------------------------------------------------------------------
+ * Por que gaussiano, e nao `Math.random()`
+ * ---------------------------------------------------------------------------
+ * O gerador do RVC tem um modulo de fluxo que espera receber ruido tirado de
+ * uma normal padrao -- media 0, desvio 1 -- porque foi assim que ele treinou.
+ *
+ * A primeira versao mandava `Math.random() * 2 - 1`, que e uniforme em [-1,1].
+ * Isso erra duas coisas ao mesmo tempo: a forma da distribuicao (uniforme nao
+ * tem cauda; normal tem) e a escala (desvio 0,577 em vez de 1). O gerador
+ * recebe uma "textura" de ruido que nunca viu, e devolve uma voz com granulacao
+ * aspera por cima.
+ *
+ * @param {number} n
+ * @param {number} [escala=1] abaixo de 1 deixa a voz mais lisa e menos viva
+ */
+function ruidoGaussiano(n, escala = 1) {
+  const saida = new Float32Array(n);
+  for (let i = 0; i < n; i += 2) {
+    // Box-Muller: dois uniformes viram dois normais independentes.
+    const u1 = Math.max(1e-7, Math.random());
+    const u2 = Math.random();
+    const raio = Math.sqrt(-2 * Math.log(u1));
+    const angulo = 2 * Math.PI * u2;
+    saida[i] = raio * Math.cos(angulo) * escala;
+    if (i + 1 < n) saida[i + 1] = raio * Math.sin(angulo) * escala;
+  }
+  return saida;
+}
+
+/**
  * Quantiza f0 em 255 degraus na escala mel, que e o que o gerador espera na
  * entrada `pitch` (a entrada `pitchf` recebe o valor continuo).
  */
@@ -309,5 +341,5 @@ function tomGrosso(f0, fMin = 50, fMax = 1100) {
 
 module.exports = {
   fft, bancoMel, janelaHann, melEspectrograma,
-  decodificarTom, taparBuracos, tomGrosso, hzParaMel, melParaHz,
+  decodificarTom, taparBuracos, ruidoGaussiano, tomGrosso, hzParaMel, melParaHz,
 };

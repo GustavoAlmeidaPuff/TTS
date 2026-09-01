@@ -9,7 +9,7 @@ const DIR = path.join(process.env.APPDATA, 'voz-tts', 'motores', 'rvc');
   const conv = new Conversor({
     contentvec: path.join(DIR, 'vec-768-layer-12.onnx'),
     rmvpe: path.join(DIR, 'rmvpe.onnx'),
-    gerador: path.join(DIR, 'woman_1.onnx'),
+    gerador: path.join(DIR, 'woman_3.onnx'),
   });
   await conv.carregar();
   console.log('gerador em: ' + conv.provedorGerador + '\n');

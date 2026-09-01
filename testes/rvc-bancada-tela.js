@@ -238,6 +238,7 @@ $('alvo-hz').addEventListener('input', () => {
   await listarVozes();
   const info = await window.rvc.pronto();
   $('btn-gravar').disabled = false;
+  $('btn-vivo').disabled = false;
   if (info.tomAlvoPadrao) {
     tomAlvo = info.tomAlvoPadrao;
     $('alvo-hz').value = tomAlvo;

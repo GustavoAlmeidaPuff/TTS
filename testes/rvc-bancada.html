@@ -48,7 +48,32 @@
         <div class="passo"><b>1.</b> Escolha seu microfone (o de verdade, não o cabo).</div>
         <select id="microfone" style="margin-top: 8px"></select>
 
-        <div class="passo" style="margin-top: 14px"><b>2.</b> Grave uns 4 segundos falando normalmente.</div>
+        <div class="passo" style="margin-top: 14px">
+          <b>2.</b> Fale ao vivo — a voz sai trocada enquanto você fala.
+        </div>
+        <div class="linha" style="margin-top: 8px">
+          <button id="btn-vivo" class="botao principal grande" disabled>Falar ao vivo</button>
+          <span class="dica" id="dica-vivo">A voz sai no dispositivo abaixo.</span>
+        </div>
+
+        <label class="rotulo" for="saida" style="margin-top: 12px">Sai em</label>
+        <select id="saida"></select>
+        <p class="miudo" id="pista-saida">
+          Escolha <em>CABLE Input</em> pra outros programas ouvirem como microfone.
+          Escolhendo seu fone, você se ouve — mas cuidado com microfonia.
+        </p>
+
+        <div class="painel" id="placar" style="margin-top: 12px; display: none">
+          <table>
+            <tr><td>atraso da voz</td><td id="p-atraso">—</td></tr>
+            <tr><td>por bloco (orçamento <span id="p-orcamento">500</span>ms)</td><td id="p-gasto">—</td></tr>
+            <tr><td>blocos atrasados</td><td id="p-atrasados">—</td></tr>
+          </table>
+        </div>
+
+        <hr style="border: none; border-top: 1px solid var(--borda); margin: 18px 0" />
+
+        <div class="passo"><b>ou</b> grave e compare, pra ajustar a voz com calma.</div>
         <div class="linha" style="margin-top: 8px">
           <button id="btn-gravar" class="botao principal grande" disabled>Gravar</button>
           <div class="medidor" style="height: 42px"><div id="medidor"></div></div>
@@ -110,5 +135,6 @@
     </div>
 
     <script src="rvc-bancada-tela.js"></script>
+    <script src="rvc-bancada-vivo.js"></script>
   </body>
 </html>

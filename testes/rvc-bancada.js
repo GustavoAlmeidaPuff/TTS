@@ -11,6 +11,7 @@ const path = require('path');
 const fs = require('fs');
 
 const { Conversor } = require('../electron/voz/rvc');
+const { Streaming } = require('../electron/voz/rvc/streaming');
 
 app.setName('voz-tts');
 
@@ -19,6 +20,7 @@ const VOZ = process.argv[2] || 'woman_1';
 // treinada -- entregar uma melodia longe disso e o que deixa a voz rouca.
 const TOM_ALVO = Number(process.argv[3]) || 200;
 let conversor = null;
+let aoVivo = null;
 
 function pastaModelos() {
   return path.join(app.getPath('userData'), 'motores', 'rvc');
@@ -82,6 +84,44 @@ app.whenReady().then(async () => {
       return { ok: false, erro: e.message };
     }
   });
+
+  // ------------------------------------------------------------- ao vivo
+  ipcMain.handle('rvc:vivoIniciar', async (evento, opcoes) => {
+    try {
+      if (aoVivo) aoVivo.removeAllListeners();
+      aoVivo = new Streaming(conversor, {
+        blocoS: (opcoes && opcoes.blocoS) || 0.5,
+        contextoS: (opcoes && opcoes.contextoS) || 0.5,
+      });
+      aoVivo.definirOpcoes({ tomAlvo: (opcoes && opcoes.tomAlvo) || 220 });
+      aoVivo.on('audio', (d) => {
+        if (!evento.sender.isDestroyed()) evento.sender.send('rvc:bloco', d);
+      });
+      aoVivo.on('erro', (e) => {
+        if (!evento.sender.isDestroyed()) evento.sender.send('rvc:vivoErro', e.message);
+      });
+      return { ok: true };
+    } catch (e) {
+      return { ok: false, erro: e.message };
+    }
+  });
+
+  // Chega ~10x por segundo: "on" e nao "handle", sem resposta pra esperar.
+  ipcMain.on('rvc:vivoAudio', (_e, amostras) => {
+    if (!aoVivo) return;
+    try {
+      aoVivo.alimentar(amostras instanceof Float32Array ? amostras : new Float32Array(amostras));
+    } catch (err) {
+      console.error('falha no bloco ao vivo:', err.message);
+    }
+  });
+
+  ipcMain.handle('rvc:vivoParar', async () => {
+    if (aoVivo) { aoVivo.removeAllListeners(); aoVivo.encerrar(); aoVivo = null; }
+    return { ok: true };
+  });
+
+  ipcMain.handle('rvc:vivoEstado', async () => (aoVivo ? aoVivo.estado() : null));
 
   ipcMain.handle('rvc:salvar', async (_e, orig, taxaOrig, conv, taxaConv) => {
     try {

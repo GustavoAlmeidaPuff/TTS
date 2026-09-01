@@ -42,14 +42,31 @@ class Conversor {
    */
   constructor(arquivos, opcoes = {}) {
     this.arquivos = arquivos;
-    // O gerador e o unico que precisa de GPU; os outros dois sao leves e a CPU
-    // e ate mais previsivel neles (sem custo de copia pra placa).
+    // AS TRES na GPU, e nao so o gerador.
+    //
+    // A primeira versao deixava ContentVec e RMVPE na CPU, achando que sendo
+    // leves nao valeria o custo de copiar pra placa. Errado, e por dois motivos:
+    // eles ja sao mais rapidos la, E na CPU eles ficavam presos atras da espera
+    // ativa que o DirectML mantem enquanto a GPU trabalha. Medido, bloco de 0,5s:
+    //
+    //              leves na CPU   leves na GPU
+    //   vec           226ms          13ms
+    //   rmvpe         182ms          19ms
+    //   gerador        90ms          35ms
+    //   fator          0,99x         0,13x
     this.provedorGerador = opcoes.provedorGerador || 'dml';
-    this.provedorLeve = opcoes.provedorLeve || 'cpu';
+    this.provedorLeve = opcoes.provedorLeve || 'dml';
     // Ver o comentario em carregar(): mais threads deixa TUDO mais lento.
     this.threads = opcoes.threads || 4;
+    // null = sem teto. Ver a nota em carregar() sobre o gerador.
+    this.threadsGerador = opcoes.threadsGerador !== undefined ? opcoes.threadsGerador : null;
+    // null = descobre medindo na primeira carga. Ver _escolherGpu().
+    this.dispositivo = opcoes.dispositivo !== undefined ? opcoes.dispositivo : null;
+    this.gpusMedidas = [];
     // Quadros de 10ms: acima disso e silencio de verdade, e tem que continuar sendo.
     this.maxBuraco = opcoes.maxBuraco ?? 5;
+    // 1 = normal padrao, que e o que o gerador viu no treino.
+    this.escalaRuido = opcoes.escalaRuido ?? 1;
     this.ultimosBuracosTapados = 0;
 
     this.contentvec = null;
@@ -65,10 +82,14 @@ class Conversor {
   }
 
   async carregar(aoProgresso) {
-    const abrir = async (caminho, provedor, rotulo) => {
+    const abrir = async (caminho, provedor, rotulo, teto = this.threads) => {
       if (aoProgresso) aoProgresso({ rotulo: `carregando ${rotulo}`, porcento: null });
       return ort.InferenceSession.create(caminho, {
-        executionProviders: [provedor],
+        executionProviders: [
+          provedor === 'dml' && this.dispositivo !== null
+            ? { name: 'dml', deviceId: this.dispositivo }
+            : provedor,
+        ],
         graphOptimizationLevel: 'all',
 
         // ------------------------------------------------------------------
@@ -88,8 +109,7 @@ class Conversor {
         // Contraintuitivo e real: dar MENOS nucleos pra cada um deixa o
         // conjunto quase 3x mais rapido.
         // ------------------------------------------------------------------
-        intraOpNumThreads: this.threads,
-        interOpNumThreads: 1,
+        ...(teto ? { intraOpNumThreads: teto, interOpNumThreads: 1 } : {}),
       });
     };
 
@@ -97,14 +117,81 @@ class Conversor {
     this.rmvpe = await abrir(this.arquivos.rmvpe, this.provedorLeve, 'o detector de melodia');
 
     try {
-      this.gerador = await abrir(this.arquivos.gerador, this.provedorGerador, 'a voz na GPU');
+      if (this.provedorGerador === 'dml' && this.dispositivo === null) {
+        this.dispositivo = await this._escolherGpu(aoProgresso);
+      }
+      this.gerador = await abrir(this.arquivos.gerador, this.provedorGerador, 'a voz na GPU', this.threadsGerador);
     } catch (e) {
       // Sem GPU o app ainda converte, mas nao em tempo real -- e melhor dizer
       // isso do que fingir que esta tudo bem e travar o audio depois.
       this.provedorGerador = 'cpu';
-      this.gerador = await abrir(this.arquivos.gerador, 'cpu', 'a voz (sem GPU: vai ficar lento)');
+      this.gerador = await abrir(this.arquivos.gerador, 'cpu', 'a voz (sem GPU: vai ficar lento)', this.threads);
       this.semGpu = true;
     }
+  }
+
+  /**
+   * Descobre QUAL placa de video usar, medindo em vez de supondo.
+   *
+   * ---------------------------------------------------------------------------
+   * A armadilha que isto resolve
+   * ---------------------------------------------------------------------------
+   * O DirectML usa o "dispositivo 0" quando ninguem diz o contrario. Em notebook
+   * com placa dedicada, o dispositivo 0 quase sempre e a INTEGRADA -- e a
+   * dedicada, que e a razao de ter comprado o notebook, fica parada.
+   *
+   * Medido nesta maquina, o mesmo gerador no mesmo bloco:
+   *
+   *   dispositivo 0 (Intel integrada) : 627ms
+   *   dispositivo 1 (RTX 4050)        :  82ms   <- 7,6x mais rapido
+   *   dispositivo 2                   : 658ms
+   *
+   * A diferenca decide se a conversao ao vivo cabe ou nao cabe. E nao da pra
+   * fixar "use o 1": a ordem muda de maquina pra maquina. Entao a escolha e
+   * feita medindo, uma vez, no proprio modelo que vai ser usado.
+   * ---------------------------------------------------------------------------
+   *
+   * @returns {Promise<number>} o indice do dispositivo mais rapido
+   */
+  async _escolherGpu(aoProgresso) {
+    if (aoProgresso) aoProgresso({ rotulo: 'procurando a placa de vídeo mais rápida', porcento: null });
+
+    const T = 50; // bloco minusculo: so pra comparar, nao pra usar
+    const entradas = () => ({
+      phone: new ort.Tensor('float32', new Float32Array(T * 768), [1, T, 768]),
+      phone_lengths: new ort.Tensor('int64', BigInt64Array.from([BigInt(T)]), [1]),
+      pitch: new ort.Tensor('int64', BigInt64Array.from({ length: T }, () => 180n), [1, T]),
+      pitchf: new ort.Tensor('float32', new Float32Array(T).fill(220), [1, T]),
+      ds: new ort.Tensor('int64', BigInt64Array.from([0n]), [1]),
+      rnd: new ort.Tensor('float32', new Float32Array(192 * T), [1, 192, T]),
+    });
+
+    let melhor = { dispositivo: 0, ms: Infinity };
+    this.gpusMedidas = [];
+
+    for (let dev = 0; dev < 4; dev++) {
+      let sessao = null;
+      try {
+        sessao = await ort.InferenceSession.create(this.arquivos.gerador, {
+          executionProviders: [{ name: 'dml', deviceId: dev }],
+          graphOptimizationLevel: 'all',
+        });
+        await sessao.run(entradas()); // aquece: a primeira sempre mente
+        const t0 = Date.now();
+        await sessao.run(entradas());
+        await sessao.run(entradas());
+        const ms = (Date.now() - t0) / 2;
+
+        this.gpusMedidas.push({ dispositivo: dev, ms: Math.round(ms) });
+        if (ms < melhor.ms) melhor = { dispositivo: dev, ms };
+      } catch (_) {
+        break; // acabaram os dispositivos
+      } finally {
+        if (sessao) await sessao.release().catch(() => {});
+      }
+    }
+
+    return melhor.dispositivo;
   }
 
   /**
@@ -116,10 +203,13 @@ class Conversor {
    */
   async trocarGerador(caminho) {
     const novo = await ort.InferenceSession.create(caminho, {
-      executionProviders: [this.provedorGerador],
+      executionProviders: [
+        this.provedorGerador === 'dml' && this.dispositivo !== null
+          ? { name: 'dml', deviceId: this.dispositivo }
+          : this.provedorGerador,
+      ],
       graphOptimizationLevel: 'all',
-      intraOpNumThreads: this.threads,
-      interOpNumThreads: 1,
+      ...(this.threadsGerador ? { intraOpNumThreads: this.threadsGerador, interOpNumThreads: 1 } : {}),
     });
     const velho = this.gerador;
     this.gerador = novo;
@@ -262,8 +352,7 @@ class Conversor {
     }
 
     const T = conteudo.quadros;
-    const rnd = new Float32Array(192 * T);
-    for (let i = 0; i < rnd.length; i++) rnd[i] = Math.random() * 2 - 1;
+    const rnd = sinal.ruidoGaussiano(192 * T, this.escalaRuido);
 
     const t2 = Date.now();
     const r = await this.gerador.run({
