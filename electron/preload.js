@@ -44,6 +44,35 @@ contextBridge.exposeInMainWorld('api', {
     return () => ipcRenderer.removeListener('voz:progresso', fn);
   },
 
+  // ----------------------------------------------------- troca de timbre
+  rvcStatus: () => ipcRenderer.invoke('rvc:status'),
+  rvcInstalar: (idVoz) => ipcRenderer.invoke('rvc:instalar', idVoz),
+  rvcCarregar: (idVoz) => ipcRenderer.invoke('rvc:carregar', idVoz),
+  rvcAquecer: (blocoS) => ipcRenderer.invoke('rvc:aquecer', blocoS),
+  rvcVivoIniciar: (opcoes) => ipcRenderer.invoke('rvc:vivoIniciar', opcoes),
+  rvcVivoParar: () => ipcRenderer.invoke('rvc:vivoParar'),
+  rvcLiberar: () => ipcRenderer.invoke('rvc:liberar'),
+
+  /** Manda um bloco de audio do microfone. Sem resposta, de proposito. */
+  rvcAudio: (amostras) => ipcRenderer.send('rvc:audio', amostras),
+
+  aoBlocoRvc: (callback) => {
+    const fn = (_e, dados) => callback(dados);
+    ipcRenderer.on('rvc:bloco', fn);
+    return () => ipcRenderer.removeListener('rvc:bloco', fn);
+  },
+  aoProgressoRvc: (callback) => {
+    const fn = (_e, dados) => callback(dados);
+    ipcRenderer.on('rvc:progresso', fn);
+    return () => ipcRenderer.removeListener('rvc:progresso', fn);
+  },
+  aoErroRvc: (callback) => ipcRenderer.on('rvc:vivoErro', (_e, m) => callback(m)),
+
+  // ------------------------------------------------------------- efeitos
+  efeitosEscolherPasta: () => ipcRenderer.invoke('efeitos:escolherPasta'),
+  efeitosListar: (pasta) => ipcRenderer.invoke('efeitos:listar', pasta),
+  efeitosLer: (caminho) => ipcRenderer.invoke('efeitos:ler', caminho),
+
   lerConfig: () => ipcRenderer.invoke('config:ler'),
   salvarConfig: (config) => ipcRenderer.invoke('config:salvar', config),
 

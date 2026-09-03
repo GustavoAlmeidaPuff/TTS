@@ -9,22 +9,25 @@
  * e um teste que exercita uma imitacao do app nao testa o app.
  */
 
-const { ipcMain, shell } = require('electron');
+const { ipcMain, shell, dialog, BrowserWindow } = require('electron');
 const path = require('path');
 const fs = require('fs');
 
 const motores = require('./tts');
 const { Sessao } = require('./voz');
 const modelosVoz = require('./voz/modelos');
+const { SessaoRvc } = require('./voz/rvc/sessao');
+const modelosRvc = require('./voz/rvc/modelos');
+const efeitos = require('./efeitos');
 
 /** Sites que o app tem permissao de abrir no navegador de verdade. */
 const LINKS_PERMITIDOS = ['https://vb-audio.com/Cable/', 'https://github.com/rhasspy/piper'];
 
 /**
- * @param {{pastaDados: string, sessaoVoz?: Sessao}} opcoes
- * @returns {{sessaoVoz: Sessao}}
+ * @param {{pastaDados: string, sessaoVoz?: Sessao, sessaoRvc?: SessaoRvc}} opcoes
+ * @returns {{sessaoVoz: Sessao, sessaoRvc: SessaoRvc}}
  */
-function registrar({ pastaDados, sessaoVoz = new Sessao() }) {
+function registrar({ pastaDados, sessaoVoz = new Sessao(), sessaoRvc = new SessaoRvc() }) {
   const arquivoConfig = () => path.join(pastaDados, 'config.json');
 
   const lerConfig = () => {
@@ -127,6 +130,103 @@ function registrar({ pastaDados, sessaoVoz = new Sessao() }) {
 
   ipcMain.on('voz:encerrarTrecho', () => sessaoVoz.encerrarTrecho());
 
+  // ------------------------------------------------------- troca de timbre
+
+  ipcMain.handle('rvc:status', async () => ({ ...modelosRvc.status(), ...sessaoRvc.info() }));
+
+  ipcMain.handle('rvc:instalar', async (evento, idVoz) => {
+    try {
+      await modelosRvc.instalar(idVoz, (p) => evento.sender.send('rvc:progresso', p));
+      return { ok: true };
+    } catch (e) {
+      return { ok: false, erro: e.message };
+    }
+  });
+
+  ipcMain.handle('rvc:carregar', async (evento, idVoz) => {
+    try {
+      const info = await sessaoRvc.garantir(idVoz, (p) => evento.sender.send('rvc:progresso', p));
+      return { ok: true, ...info };
+    } catch (e) {
+      return { ok: false, erro: e.message };
+    }
+  });
+
+  ipcMain.handle('rvc:aquecer', async (_evento, blocoS) => {
+    try {
+      await sessaoRvc.aquecer(Number(blocoS) || 0.75);
+      return { ok: true };
+    } catch (e) {
+      return { ok: false, erro: e.message };
+    }
+  });
+
+  ipcMain.handle('rvc:vivoIniciar', async (evento, opcoes) => {
+    try {
+      sessaoRvc.removeAllListeners();
+      const paraTela = (canal) => (dados) => {
+        if (!evento.sender.isDestroyed()) evento.sender.send(canal, dados);
+      };
+      sessaoRvc.on('bloco', paraTela('rvc:bloco'));
+      sessaoRvc.on('erro', (e) => paraTela('rvc:vivoErro')(e.message));
+      sessaoRvc.iniciarAoVivo(opcoes || {});
+      return { ok: true };
+    } catch (e) {
+      return { ok: false, erro: e.message };
+    }
+  });
+
+  // Chega ~10x por segundo: "on" e nao "handle", sem resposta pra esperar.
+  ipcMain.on('rvc:audio', (_evento, amostras) => {
+    try {
+      sessaoRvc.alimentar(amostras instanceof Float32Array ? amostras : new Float32Array(amostras));
+    } catch (e) {
+      console.error('falha no bloco de timbre:', e.message);
+    }
+  });
+
+  ipcMain.handle('rvc:vivoParar', async () => {
+    sessaoRvc.pararAoVivo();
+    return { ok: true };
+  });
+
+  ipcMain.handle('rvc:liberar', async () => {
+    await sessaoRvc.liberar();
+    return { ok: true };
+  });
+
+  // ------------------------------------------------------------ efeitos ----
+
+  // A pasta escolhida fica guardada AQUI, e nao so na config da interface: e
+  // ela que autoriza a leitura de cada arquivo. Se a interface pudesse mandar
+  // a pasta junto com o pedido de leitura, mandar qualquer pasta liberaria
+  // qualquer arquivo -- a autorizacao tem que morar do lado que decide.
+  let pastaEfeitos = lerConfig().pastaEfeitos || '';
+
+  ipcMain.handle('efeitos:escolherPasta', async (evento) => {
+    const janela = BrowserWindow.fromWebContents(evento.sender);
+    const escolha = await dialog.showOpenDialog(janela, {
+      title: 'Escolha a pasta dos efeitos sonoros',
+      properties: ['openDirectory'],
+      defaultPath: pastaEfeitos || undefined,
+    });
+    if (escolha.canceled || !escolha.filePaths[0]) return { ok: false, cancelado: true };
+    pastaEfeitos = escolha.filePaths[0];
+    return efeitos.listar(pastaEfeitos);
+  });
+
+  ipcMain.handle('efeitos:listar', async (_evento, pasta) => {
+    const alvo = pasta || pastaEfeitos;
+    if (!alvo) return { ok: false, erro: 'nenhuma pasta escolhida' };
+    const r = efeitos.listar(alvo);
+    // So passa a valer como pasta autorizada se der pra ler de verdade: uma
+    // pasta que sumiu (pendrive, rede) nao pode derrubar a que ainda funciona.
+    if (r.ok) pastaEfeitos = alvo;
+    return r;
+  });
+
+  ipcMain.handle('efeitos:ler', async (_evento, caminho) => efeitos.ler(pastaEfeitos, caminho));
+
   // ------------------------------------------------------------------ ajustes
 
   ipcMain.handle('config:ler', async () => lerConfig());
@@ -136,7 +236,7 @@ function registrar({ pastaDados, sessaoVoz = new Sessao() }) {
     if (LINKS_PERMITIDOS.includes(url)) await shell.openExternal(url);
   });
 
-  return { sessaoVoz };
+  return { sessaoVoz, sessaoRvc };
 }
 
 module.exports = { registrar };

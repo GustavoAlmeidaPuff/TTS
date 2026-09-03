@@ -17,8 +17,11 @@
  * pelo que veio depois, pontuacao e maiusculas no lugar. E o que faz o TTS ler
  * com entonacao de frase em vez de ladainha.
  *
- * Quem decide que voce terminou e a deteccao de fim de fala do sherpa, medindo
- * o silencio depois do audio ja reconhecido (`pausaFinalS`).
+ * Quem levanta a mao dizendo que voce terminou e a deteccao de fim de fala do
+ * sherpa, medindo o silencio depois do audio ja reconhecido (`pausaFinalS`).
+ * Mas ela sozinha erra: respirar no meio da frase parece fim de frase pra ela,
+ * e "the english voice is way better" saia partido em "the english" + "way
+ * better". Entao o palpite dela passa por `_adiar` antes de virar fala.
  * ---------------------------------------------------------------------------
  */
 
@@ -33,11 +36,21 @@ const LIMIAR_FALA = 0.01;
  * curta fica presa e some no reset.
  */
 const CAUDA_S = 0.6;
+/**
+ * Quanto ainda se espera depois da pausa quando a frase parece inacabada
+ * (microfone ainda com voz, ou texto que nao terminou em ponto). E tambem o
+ * teto: passado ele a frase sai do jeito que esta, custe o que custar.
+ */
+const ESPERA_EXTRA_S = 1.0;
+/** Fim de frase de verdade: ponto, exclamacao, interrogacao, reticencias. */
+const FIM_DE_FRASE = /[.!?…]["”’')\]]*$/;
 
 /**
  * @typedef {Object} Opcoes
  * @property {number} [pausaFinalS=0.8] quanto silencio encerra a frase. Menor
  *   responde antes e corta quem pensa no meio da frase; maior espera mais.
+ * @property {number} [esperaExtraS=1.0] quanto se espera alem da pausa quando
+ *   a frase parece inacabada (ver `_adiar`). Tambem e o teto da espera.
  * @property {number} [numThreads=2]
  */
 
@@ -51,6 +64,7 @@ class Reconhecedor extends EventEmitter {
     const sherpa = require('sherpa-onnx-node');
 
     this.pausaFinalS = opcoes.pausaFinalS ?? 0.8;
+    this.esperaExtraS = opcoes.esperaExtraS ?? ESPERA_EXTRA_S;
     this.aquecimentoS = opcoes.aquecimentoS ?? 0.2;
 
     this.reconhecedor = new sherpa.OnlineRecognizer({
@@ -81,6 +95,12 @@ class Reconhecedor extends EventEmitter {
     this.fluxo = this.reconhecedor.createStream();
     this.palpite = '';
     this._ouviuFala = false;
+    /** Silencio acumulado desde o ultimo bloco com voz, em segundos. */
+    this._silencioS = 0;
+    /** Piso de ruido do ambiente, pra o limiar de voz nao ser fixo. */
+    this._ruido = 0;
+    /** Se ja se viu pontuacao vinda do modelo (nemotron pontua, outros nao). */
+    this._modeloPontua = false;
     this._aquecer();
   }
 
@@ -116,7 +136,10 @@ class Reconhecedor extends EventEmitter {
    * @param {Float32Array} amostras mono, 16 kHz, faixa -1..1
    */
   alimentar(amostras) {
-    if (energia(amostras) > LIMIAR_FALA) this._ouviuFala = true;
+    const duracaoS = amostras.length / TAXA;
+    const falando = this._medirVoz(energia(amostras));
+    if (falando) this._ouviuFala = true;
+    this._silencioS = falando ? 0 : this._silencioS + duracaoS;
 
     this.fluxo.acceptWaveform({ samples: amostras, sampleRate: TAXA });
 
@@ -125,11 +148,13 @@ class Reconhecedor extends EventEmitter {
     }
 
     this.palpite = this._lerPalpite();
+    if (/[.!?…]/.test(this.palpite)) this._modeloPontua = true;
     // O palpite serve so pra tela: mostra que o app esta ouvindo enquanto a
     // frase ainda pode mudar. Nada dele e falado.
     this.emit('parcial', { texto: this.palpite, entregue: '' });
 
     if (!this.reconhecedor.isEndpoint(this.fluxo)) return;
+    if (this._adiar(falando)) return;
 
     // Palavra curta: a pausa chega antes do decoder emitir token nenhum.
     // Sem a cauda, o reset joga fora o audio que ainda estava na janela.
@@ -138,6 +163,45 @@ class Reconhecedor extends EventEmitter {
       this.palpite = this._lerPalpite() || this.palpite;
     }
     this._fecharFrase();
+  }
+
+  /**
+   * Decide se a pausa detectada pelo sherpa ainda nao e o fim da frase.
+   *
+   * O detector do sherpa mede silencio no que o decodificador cuspiu, e ele
+   * cospe blanks tanto na pausa entre frases quanto na respirada no meio de
+   * uma -- por isso "the english voice is way better" saia partido em "the
+   * english" e "way better". Duas checagens seguram a entrega:
+   *
+   * 1. o microfone ainda tem voz: quem esta falando nao terminou, ponto;
+   * 2. o texto nao terminou em ponto final: modelo que pontua (nemotron) so
+   *    fecha a frase quando ela de fato acabou, entao "the english" sem ponto
+   *    e frase pela metade. Modelo que nunca pontua nao entra nessa regra.
+   *
+   * O teto e `this.esperaExtraS`: passado ele a frase sai como esta, senao um
+   * ruido de fundo constante ou um modelo que esqueceu o ponto prenderia a
+   * frase pra sempre.
+   *
+   * @param {boolean} falando se o bloco recem-entregue tinha nivel de voz
+   */
+  _adiar(falando) {
+    if (this._silencioS >= this.pausaFinalS + this.esperaExtraS) return false;
+    if (falando) return true;
+    return this._modeloPontua && !!this.palpite && !FIM_DE_FRASE.test(this.palpite);
+  }
+
+  /**
+   * Diz se o bloco tem voz, com o limiar acompanhando o ruido do ambiente:
+   * num quarto silencioso vale o piso fixo, num ventilador ligado sobe junto
+   * -- senao o ruido contaria como fala e a frase nunca fecharia.
+   *
+   * @param {number} nivel RMS do bloco
+   */
+  _medirVoz(nivel) {
+    const limiar = Math.max(LIMIAR_FALA, this._ruido * 3);
+    if (nivel > limiar) return true;
+    this._ruido = this._ruido ? this._ruido * 0.95 + nivel * 0.05 : nivel;
+    return false;
   }
 
   /**
@@ -156,6 +220,7 @@ class Reconhecedor extends EventEmitter {
     this.reconhecedor.reset(this.fluxo);
     this.palpite = '';
     this._ouviuFala = false;
+    this._silencioS = 0;
     this._aquecer();
     this.emit('fimDeTrecho');
   }

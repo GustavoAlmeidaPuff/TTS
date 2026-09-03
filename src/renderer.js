@@ -16,9 +16,12 @@ const $ = (id) => document.getElementById(id);
 
 const el = {
   ponto: $('ponto-estado'), estado: $('estado'),
-  abaDigitar: $('aba-digitar'), abaVivo: $('aba-vivo'),
-  modoDigitar: $('modo-digitar'), modoVivo: $('modo-vivo'),
+  abaDigitar: $('aba-digitar'), abaVivo: $('aba-vivo'), abaTimbre: $('aba-timbre'),
+  abaEfeitos: $('aba-efeitos'),
+  modoDigitar: $('modo-digitar'), modoVivo: $('modo-vivo'), modoTimbre: $('modo-timbre'),
+  modoEfeitos: $('modo-efeitos'),
   blocoHistorico: $('bloco-historico'), grupoVivo: $('grupo-vivo'),
+  grupoTimbre: $('grupo-timbre'), grupoVoz: $('grupo-voz'), grupoEfeitos: $('grupo-efeitos'),
 
   texto: $('texto'), btnFalar: $('btn-falar'), btnParar: $('btn-parar'),
   btnTestar: $('btn-testar'), btnRestaurar: $('btn-restaurar'),
@@ -114,6 +117,14 @@ function vozesDoIdioma(id = idiomaAtual()) {
   return vozes.filter((v) => (v.lingua || '').toLowerCase().startsWith(id));
 }
 
+/**
+ * Escreve na linha de estado do topo.
+ *
+ * `timbre.js` e `efeitos.js` chamam esta mesma funcao: sao scripts classicos no
+ * mesmo escopo global, entao `avisar` (como `salvar`) ja esta visivel pros dois
+ * sem precisar de nenhuma ponte -- e criar uma (`window.avisar = ...`) so daria
+ * chance de alguem envolver a funcao nela mesma.
+ */
 function avisar(mensagem, tipo = '') {
   el.estado.textContent = mensagem;
   el.estado.classList.toggle('erro', tipo === 'erro');
@@ -764,7 +775,12 @@ function desenharHistorico() {
 // =========================================================== persistencia ====
 
 function salvar() {
+  const efeitos = window.efeitos ? window.efeitos.estado() : {};
   window.api.salvarConfig({
+    pastaEfeitos: efeitos.pasta || '',
+    volumeEfeitos: efeitos.volume,
+    disparoEfeitos: efeitos.disparo,
+    arranjosEfeitos: efeitos.arranjos,
     motor: el.motor.value, idioma: idiomaAtual(), voz: el.voz.value,
     vozPorIdioma,
     saida: el.saida.value, monitor: el.monitor.value, monitorar: el.monitorar.checked,
@@ -819,17 +835,57 @@ async function instalarComProgresso({ botao, barra, preenchida, texto, aoProgres
 
 // ================================================================== modos ====
 
+/**
+ * Troca entre os tres modos.
+ *
+ * Era binario (digitar/vivo) quando so havia dois; virou tabela quando entrou o
+ * timbre. Tabela e nao mais um booleano porque com tres modos os `!vivo`
+ * espalhados passariam a mentir -- "nao e vivo" deixou de significar "e digitar".
+ */
+/**
+ * `captura` diz se o modo segura o MICROFONE -- e e so isso que obriga um modo a
+ * desligar o outro. Ao vivo e Trocar timbre disputam a mesma entrada e nao
+ * podem correr juntos; Digitar e Efeitos nao capturam nada, entao passar por
+ * eles nao tem por que derrubar o que ja esta no ar.
+ *
+ * A distincao nasceu de um caso concreto: soltar um efeito no meio de uma fala
+ * ao vivo desligava o microfone, porque a regra antiga era "saiu do vivo,
+ * desliga" -- ela olhava de onde voce saiu em vez de pra onde voce foi.
+ */
+const MODOS = {
+  digitar: { aba: 'abaDigitar', painel: 'modoDigitar', ajustes: null, historico: true, captura: false },
+  vivo: { aba: 'abaVivo', painel: 'modoVivo', ajustes: 'grupoVivo', historico: false, captura: true },
+  timbre: { aba: 'abaTimbre', painel: 'modoTimbre', ajustes: 'grupoTimbre', historico: false, captura: true },
+  efeitos: { aba: 'abaEfeitos', painel: 'modoEfeitos', ajustes: 'grupoEfeitos', historico: false, captura: false },
+};
+
 function trocarModo(novo) {
+  const anterior = modo;
   modo = novo;
+
+  for (const [id, def] of Object.entries(MODOS)) {
+    const ativo = id === novo;
+    el[def.aba].classList.toggle('ativa', ativo);
+    el[def.painel].classList.toggle('oculto', !ativo);
+    if (def.ajustes) el[def.ajustes].classList.toggle('oculto', !ativo);
+  }
+  el.blocoHistorico.classList.toggle('oculto', !MODOS[novo].historico);
+  // Motor, idioma e voz sao do TTS: nos modos timbre e efeitos nao ha texto
+  // nenhum, e deixar esses controles la sugeriria que mexem em alguma coisa.
+  el.grupoVoz.classList.toggle('oculto', novo === 'timbre' || novo === 'efeitos');
+
+  // O microfone so e solto quando o destino tambem quer capturar: dois modos
+  // disputando a mesma entrada dariam audio picotado nos dois. Indo pra
+  // Digitar ou Efeitos, o que estava no ar continua no ar.
+  if (MODOS[novo].captura && MODOS[anterior] && MODOS[anterior].captura && anterior !== novo) {
+    if (anterior === 'vivo' && microfone.ligado) alternarEscuta();
+    if (anterior === 'timbre' && window.timbre) window.timbre.aoSair();
+  }
+  if (novo === 'timbre' && window.timbre) window.timbre.aoEntrar();
+  if (anterior === 'efeitos' && novo !== 'efeitos' && window.efeitos) window.efeitos.aoSair();
+  if (novo === 'efeitos' && window.efeitos) window.efeitos.aoEntrar();
+
   const vivo = novo === 'vivo';
-
-  el.abaVivo.classList.toggle('ativa', vivo);
-  el.abaDigitar.classList.toggle('ativa', !vivo);
-  el.modoVivo.classList.toggle('oculto', !vivo);
-  el.modoDigitar.classList.toggle('oculto', vivo);
-  el.grupoVivo.classList.toggle('oculto', !vivo);
-  el.blocoHistorico.classList.toggle('oculto', vivo);
-
   if (vivo) {
     verificarModelosVoz();
     // O Edge cobra 1,5 a 3,5s de ida e volta de rede por trecho -- em tempo
@@ -841,8 +897,6 @@ function trocarModo(novo) {
       el.dicaVivo.textContent = 'Fale à vontade: cada frase sai depois que você faz uma pausa.';
       el.dicaVivo.classList.remove('alerta-texto');
     }
-  } else if (microfone.ligado) {
-    alternarEscuta();
   }
 }
 
@@ -860,6 +914,15 @@ async function iniciar() {
   if (config.monitorar) el.monitorar.checked = true;
   historico = Array.isArray(config.historico) ? config.historico : [];
   vozPorIdioma = config.vozPorIdioma && typeof config.vozPorIdioma === 'object' ? config.vozPorIdioma : {};
+
+  if (window.efeitos) {
+    window.efeitos.restaurar({
+      pasta: config.pastaEfeitos,
+      volume: config.volumeEfeitos,
+      disparo: config.disparoEfeitos,
+      arranjos: config.arranjosEfeitos,
+    });
+  }
 
   atualizarValores();
   desenharHistorico();
@@ -888,6 +951,8 @@ async function iniciar() {
 
 el.abaDigitar.addEventListener('click', () => trocarModo('digitar'));
 el.abaVivo.addEventListener('click', () => trocarModo('vivo'));
+el.abaTimbre.addEventListener('click', () => trocarModo('timbre'));
+el.abaEfeitos.addEventListener('click', () => trocarModo('efeitos'));
 
 el.btnFalar.addEventListener('click', () => falar());
 el.btnParar.addEventListener('click', parar);

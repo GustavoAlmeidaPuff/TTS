@@ -1,11 +1,5 @@
 
-carregando os modelos (uns 3s)...
-pronto. gerador em: dml
-[tela] %cElectron Security Warning (Insecure Content-Security-Policy) font-weight: bold; This renderer process has either no Content Security
-  Policy set or a policy with "unsafe-eval" enabled. This exposes users of
-  this app to unnecessary security risks.
+> voz-tts@0.1.0 start
+> electron .
 
-For more information and help, consult
-https://electronjs.org/docs/tutorial/security.
-This warning will not show up
-once the app is packaged.
+

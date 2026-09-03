@@ -1,5 +1,9 @@
 'use strict';
 
+// ANTES de qualquer coisa que possa puxar o sherpa-onnx. Ver comum/onnx.js:
+// as duas bibliotecas trazem cada uma sua onnxruntime.dll e a ordem importa.
+require('./comum/onnx');
+
 const { app, BrowserWindow, session, shell, globalShortcut, screen } = require('electron');
 const path = require('path');
 
@@ -10,16 +14,19 @@ app.setName('voz-tts');
 
 const motores = require('./tts');
 const modelosVoz = require('./voz/modelos');
+const modelosRvc = require('./voz/rvc/modelos');
 const ipc = require('./ipc');
 
 const pastaDados = app.getPath('userData');
 const pastaMotores = path.join(pastaDados, 'motores');
 motores.piper.definirRaiz(pastaMotores);
 modelosVoz.definirRaiz(pastaMotores);
+modelosRvc.definirRaiz(pastaMotores);
 
 const ehDev = process.argv.includes('--dev');
 let janela = null;
 let sessaoVoz = null;
+let sessaoRvc = null;
 
 function criarJanela() {
   const display = screen.getPrimaryDisplay();
@@ -68,6 +75,7 @@ function criarJanela() {
     // O reconhecedor segura centenas de MB; sem soltar aqui, fechar a janela
     // no macOS (onde o app continua vivo) deixaria a memoria presa.
     if (sessaoVoz) sessaoVoz.parar();
+    if (sessaoRvc) sessaoRvc.liberar();
   });
 }
 
@@ -78,7 +86,7 @@ app.whenReady().then(() => {
     permitir(permissao === 'media' || permissao === 'audioCapture');
   });
 
-  ({ sessaoVoz } = ipc.registrar({ pastaDados }));
+  ({ sessaoVoz, sessaoRvc } = ipc.registrar({ pastaDados }));
 
   criarJanela();
 
@@ -97,6 +105,7 @@ app.whenReady().then(() => {
 app.on('will-quit', () => {
   globalShortcut.unregisterAll();
   if (sessaoVoz) sessaoVoz.parar();
+  if (sessaoRvc) sessaoRvc.liberar();
   // Os processos do Piper ficam vivos entre as falas; sem isso sobrariam
   // piper.exe orfaos depois de fechar o app.
   motores.piper.encerrarTudo();

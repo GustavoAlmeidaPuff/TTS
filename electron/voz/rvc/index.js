@@ -212,9 +212,23 @@ class Conversor {
     if (!resultado) return null; // sem sondagem: o sistema escolhe
 
     this.gpusMedidas = resultado.medidas || [];
-    const melhor = { dispositivo: resultado.dispositivo };
 
-    return melhor.dispositivo;
+    // GUARDA A RESPOSTA. Sem esta parte o comentario la em cima era mentira: o
+    // arquivo era lido e nunca escrito, entao a sondagem -- 15s de espera mais
+    // o rastro que ela deixa na placa -- acontecia em TODA abertura do modo
+    // timbre, e nao "uma vez na vida".
+    if (this.cacheDispositivo && Number.isInteger(resultado.dispositivo)) {
+      try {
+        fs.writeFileSync(
+          this.cacheDispositivo,
+          JSON.stringify({ dispositivo: resultado.dispositivo, medidas: this.gpusMedidas })
+        );
+      } catch (_) {
+        // Sem o arquivo o app so fica lento pra abrir; nao e motivo pra falhar.
+      }
+    }
+
+    return resultado.dispositivo;
   }
 
   /**

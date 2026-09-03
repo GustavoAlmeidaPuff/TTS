@@ -491,3 +491,295 @@ select.perigo {
   border-color: var(--erro);
   background: rgba(248, 113, 113, 0.08);
 }
+
+/* ------------------------------------------------------- trocar timbre --- */
+
+#modo-timbre {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 0;
+  flex: 1;
+}
+#modo-timbre.oculto { display: none; }
+
+table.placar { width: 100%; border-collapse: collapse; font-size: 13px; }
+table.placar td { padding: 5px 0; border-bottom: 1px solid var(--borda); }
+table.placar tr:last-child td { border-bottom: none; }
+table.placar td:last-child {
+  text-align: right;
+  color: var(--acento-forte);
+  font-variant-numeric: tabular-nums;
+}
+.placar-caixa { min-height: auto; }
+.rotulo.espacado { margin-top: 14px; }
+.medidor.alto { height: 42px; }
+
+/* -------------------------------------------------------------- efeitos --- */
+
+#modo-efeitos {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 0;
+  flex: 1;
+}
+#modo-efeitos.oculto { display: none; }
+
+.caminho-pasta {
+  margin: 0;
+  font-size: 12px;
+  color: var(--texto-fraco);
+  font-family: ui-monospace, Consolas, monospace;
+  direction: rtl;          /* pasta longa corta pela esquerda: o fim é o que importa */
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.filtro {
+  width: 100%;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--borda);
+  background: var(--fundo);
+  color: var(--texto);
+  font: inherit;
+}
+.filtro:focus { outline: none; border-color: var(--acento); }
+.filtro.oculto { display: none; }
+
+.vazio-grade {
+  margin: 0;
+  padding: 26px 14px;
+  border: 1px dashed var(--borda);
+  border-radius: var(--raio);
+  text-align: center;
+  font-style: italic;
+  color: var(--texto-fraco);
+}
+.vazio-grade.oculto { display: none; }
+
+/* Os botões são grandes de propósito: acertar o efeito certo no meio de uma
+   conversa é mira, não leitura. `auto-fill` com mínimo largo mantém o alvo
+   gordo em qualquer largura de janela em vez de espremer mais colunas. */
+.grade-efeitos {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+  gap: 10px;
+  overflow-y: auto;
+  align-content: start;
+  min-height: 0;
+  flex: 1;
+  padding: 2px;
+}
+.grade-efeitos.oculto { display: none; }
+
+.efeito {
+  position: relative;
+  min-height: 104px;
+  padding: 14px 12px;
+  border-radius: var(--raio);
+  border: 1px solid var(--borda);
+  background: var(--painel-alto);
+  color: var(--texto);
+  font: inherit;
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.3;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  /* Sem isso, segurar o botão vira seleção de texto e arraste de imagem. */
+  user-select: none;
+  -webkit-user-drag: none;
+  touch-action: none;
+  transition: background 0.12s, border-color 0.12s, transform 0.06s;
+}
+.efeito:hover { background: #2a3040; border-color: #3a4055; }
+.efeito:focus-visible { outline: 2px solid var(--acento); outline-offset: 2px; }
+
+.efeito-nome {
+  /* Nome longo desce até três linhas e só então corta: o nome é a única
+     identificação que o botão tem. */
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+
+/* apertado = dedo em cima; soando = ainda saindo som */
+.efeito.apertado,
+.efeito.soando {
+  background: var(--acento);
+  border-color: var(--acento-forte);
+  color: #0d1020;
+}
+.efeito.apertado { transform: scale(0.975); }
+
+/* Bolinha discreta no canto: já decodificado, dispara na hora. */
+.efeito.pronto::after {
+  content: '';
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--ok);
+  opacity: 0.5;
+}
+
+.efeito.quebrado {
+  border-color: var(--erro);
+  background: rgba(248, 113, 113, 0.08);
+  color: var(--erro);
+}
+
+/* ------------------------------------------------- efeitos: organizar ----- */
+
+.linha-filtro {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.linha-filtro.oculto { display: none; }
+.linha-filtro .filtro { flex: 1; }
+.linha-filtro .filtro.oculto { display: none; }
+
+/* botão de alternância que fica "afundado" quando ligado */
+.botao[aria-pressed="true"] {
+  background: var(--acento);
+  border-color: var(--acento);
+  color: #0d1020;
+  font-weight: 600;
+}
+
+.efeito-emoji {
+  font-size: 30px;
+  line-height: 1;
+  margin-bottom: 6px;
+  /* Emoji não herda o peso do botão e fica borrado se esticar. */
+  font-weight: 400;
+}
+
+.efeito {
+  flex-direction: column;
+}
+
+/* Estrela do favorito: indicador mudo enquanto se toca, alvo de clique só no
+   modo organizar -- senão um clique torto favoritaria em vez de tocar. */
+.efeito-estrela {
+  position: absolute;
+  top: 6px;
+  left: 8px;
+  font-size: 14px;
+  line-height: 1;
+  color: var(--alerta);
+  pointer-events: none;
+  opacity: 0;
+}
+.efeito.favorito .efeito-estrela { opacity: 1; }
+.efeito.favorito {
+  border-color: rgba(251, 191, 36, 0.55);
+}
+
+/* ------------------------------------------------------- modo organizar --- */
+
+.grade-efeitos.organizando .efeito {
+  cursor: grab;
+  border-style: dashed;
+  /* O `-webkit-user-drag: none` lá de cima existe pra segurar o botão sem
+     arrastar imagem; aqui ele precisa sair de cena, senão o arrasto de
+     reordenar nem começa. */
+  -webkit-user-drag: element;
+  touch-action: auto;
+}
+.grade-efeitos.organizando .efeito:active { cursor: grabbing; }
+.grade-efeitos.organizando .efeito-estrela {
+  pointer-events: auto;
+  cursor: pointer;
+  opacity: 0.3;
+  font-size: 16px;
+  padding: 2px;
+}
+.grade-efeitos.organizando .efeito.favorito .efeito-estrela { opacity: 1; }
+.grade-efeitos.organizando .efeito-estrela:hover { opacity: 0.85; }
+
+/* Cantinho pra trocar o emoji, só no modo organizar. */
+.efeito-trocar-emoji {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  font-size: 12px;
+  line-height: 1;
+  padding: 2px 5px;
+  border-radius: 5px;
+  color: var(--texto-fraco);
+  background: rgba(255, 255, 255, 0.06);
+  cursor: pointer;
+  display: none;
+}
+.grade-efeitos.organizando .efeito-trocar-emoji { display: block; }
+.grade-efeitos.organizando .efeito-trocar-emoji:hover {
+  background: var(--acento);
+  color: #0d1020;
+}
+/* No organizar a bolinha de "já decodificado" daria conflito com o cantinho. */
+.grade-efeitos.organizando .efeito.pronto::after { display: none; }
+
+.efeito.arrastando { opacity: 0.35; }
+
+/* ------------------------------------------------------ paleta de emoji --- */
+
+.paleta {
+  position: fixed;
+  z-index: 20;
+  width: 268px;
+  padding: 10px;
+  border-radius: var(--raio);
+  border: 1px solid var(--borda);
+  background: var(--painel-alto);
+  box-shadow: 0 12px 34px rgba(0, 0, 0, 0.5);
+}
+.paleta.oculto { display: none; }
+
+.paleta-grade {
+  display: grid;
+  grid-template-columns: repeat(8, 1fr);
+  gap: 2px;
+  margin-bottom: 8px;
+}
+.paleta-grade button {
+  aspect-ratio: 1;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0;
+}
+.paleta-grade button:hover { background: var(--acento); }
+
+.paleta-rodape {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+.paleta-rodape input {
+  flex: 1;
+  min-width: 0;
+  padding: 6px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--borda);
+  background: var(--fundo);
+  color: var(--texto);
+  font: inherit;
+  text-align: center;
+}
+.paleta-rodape input:focus { outline: none; border-color: var(--acento); }

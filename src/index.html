@@ -16,6 +16,8 @@
       <nav class="abas" role="tablist">
         <button class="aba ativa" id="aba-digitar" role="tab">Digitar</button>
         <button class="aba" id="aba-vivo" role="tab">Ao vivo</button>
+        <button class="aba" id="aba-timbre" role="tab">Trocar timbre</button>
+        <button class="aba" id="aba-efeitos" role="tab">Efeitos</button>
       </nav>
 
       <p class="estado" id="estado">Carregando…</p>
@@ -88,6 +90,82 @@
           </div>
         </div>
 
+        <!-- =========================== TROCAR TIMBRE ======================= -->
+        <div id="modo-timbre" class="oculto">
+          <div id="timbre-instalar" class="aviso oculto">
+            <strong>A troca de timbre ainda não foi baixada.</strong>
+            <p id="timbre-instalar-texto">
+              São cerca de 810 MB, uma vez só. Depois funciona sem internet, na
+              sua placa de vídeo.
+            </p>
+            <button class="botao pequeno" id="btn-instalar-timbre">Baixar</button>
+            <div class="barra oculto" id="barra-timbre"><div id="barra-timbre-preenchida"></div></div>
+            <p class="miudo" id="texto-progresso-timbre"></p>
+          </div>
+
+          <div id="timbre-pronto">
+            <div class="linha-acoes">
+              <button id="btn-timbre" class="botao principal">Trocar minha voz</button>
+              <div class="medidor alto" title="volume do microfone">
+                <div id="medidor-timbre"></div>
+              </div>
+              <span class="dica" id="dica-timbre">
+                Você fala, sai a voz escolhida — com a sua entonação.
+              </span>
+            </div>
+
+            <label class="rotulo" for="microfone-timbre">Microfone</label>
+            <select id="microfone-timbre"></select>
+
+            <div class="transcricao placar-caixa">
+              <table class="placar">
+                <tr><td>atraso da voz</td><td id="tb-atraso">—</td></tr>
+                <tr><td>por bloco (de <span id="tb-orcamento">750</span> ms)</td><td id="tb-gasto">—</td></tr>
+                <tr><td>seu tom → alvo</td><td id="tb-tom">—</td></tr>
+                <tr><td>portão do silêncio</td><td id="tb-portao">—</td></tr>
+              </table>
+            </div>
+
+            <p class="miudo" id="tb-gpu"></p>
+          </div>
+        </div>
+
+
+        <!-- ============================== EFEITOS ========================== -->
+        <div id="modo-efeitos" class="oculto">
+          <div class="linha-acoes">
+            <button id="btn-pasta-efeitos" class="botao principal">Escolher pasta…</button>
+            <button id="btn-recarregar-efeitos" class="botao pequeno" disabled>Recarregar</button>
+            <button id="btn-organizar-efeitos" class="botao pequeno" aria-pressed="false">Organizar</button>
+            <button id="btn-parar-efeitos" class="botao pequeno oculto">Parar tudo</button>
+            <span class="miudo" id="contagem-efeitos"></span>
+            <span class="dica" id="dica-efeitos">Segure o botão: o som toca enquanto estiver apertado.</span>
+          </div>
+
+          <p class="caminho-pasta" id="caminho-efeitos">nenhuma pasta escolhida</p>
+
+          <div class="linha-filtro oculto" id="linha-filtro-efeitos">
+            <input
+              type="search"
+              id="filtro-efeitos"
+              class="filtro"
+              placeholder="Procurar efeito…"
+              spellcheck="false"
+            />
+            <button
+              id="btn-favoritos-efeitos"
+              class="botao pequeno"
+              aria-pressed="false"
+              title="Mostrar só os favoritos"
+            >★ só favoritos</button>
+          </div>
+
+          <p class="vazio-grade" id="efeitos-vazio">
+            Escolha a pasta onde estão seus efeitos sonoros.
+          </p>
+          <div id="grade-efeitos" class="grade-efeitos oculto"></div>
+        </div>
+
         <!-- ===================== histórico (comum aos dois) ================= -->
         <div class="historico" id="bloco-historico">
           <div class="cabecalho-secao">
@@ -132,7 +210,7 @@
           <button id="btn-testar" class="botao pequeno">Testar saída</button>
         </div>
 
-        <div class="grupo">
+        <div class="grupo" id="grupo-voz">
           <h2>Voz</h2>
 
           <label class="rotulo" for="motor">Motor</label>
@@ -158,6 +236,24 @@
           </div>
         </div>
 
+        <!-- só faz sentido no modo trocar timbre -->
+        <div class="grupo oculto" id="grupo-timbre">
+          <h2>Ajuste do timbre</h2>
+
+          <label class="rotulo" for="voz-timbre">Voz alvo</label>
+          <select id="voz-timbre"></select>
+          <p class="miudo" id="descricao-voz-timbre"></p>
+
+          <label class="rotulo deslizante espacado" for="alvo-hz">
+            Quão aguda <output id="valor-alvo-hz">220 Hz</output>
+          </label>
+          <input type="range" id="alvo-hz" min="160" max="260" step="5" value="220" />
+          <p class="miudo">
+            Mede a altura da sua voz e transpõe até aqui. Mais alto soa mais
+            feminino até uns 240; passando disso vira infantil.
+          </p>
+        </div>
+
         <!-- só faz sentido no modo ao vivo -->
         <div class="grupo oculto" id="grupo-vivo">
           <h2>Ajuste do ao vivo</h2>
@@ -169,6 +265,31 @@
           <p class="miudo">
             Quanto silêncio conta como “terminei de falar”. Menor responde mais
             rápido e corta quem pensa no meio da frase; maior espera mais.
+          </p>
+        </div>
+
+        <!-- só faz sentido no modo efeitos -->
+        <div class="grupo oculto" id="grupo-efeitos">
+          <h2>Ajuste dos efeitos</h2>
+
+          <span class="rotulo" id="rotulo-disparo">Como o botão dispara</span>
+          <div class="escolha" id="disparo-efeitos" role="radiogroup" aria-labelledby="rotulo-disparo">
+            <button type="button" class="escolha-opcao ativa" data-disparo="segurar">Segurar</button>
+            <button type="button" class="escolha-opcao" data-disparo="inteiro">Até o fim</button>
+          </div>
+          <p class="miudo" id="explica-disparo">
+            <em>Segurar</em> é o CUE: o som existe enquanto o botão está
+            apertado. Em <em>Até o fim</em>, um toque dispara e o áudio corre
+            sozinho — apertar de novo (ou <em>Parar tudo</em>) corta.
+          </p>
+
+          <label class="rotulo deslizante espacado" for="volume-efeitos">
+            Volume dos efeitos <output id="valor-volume-efeitos">80%</output>
+          </label>
+          <input type="range" id="volume-efeitos" min="0" max="100" step="5" value="80" />
+          <p class="miudo">
+            Separado do volume da voz. Os efeitos saem pela mesma
+            <em>Saída principal</em> lá de cima — quem te ouve, ouve os dois.
           </p>
         </div>
 
@@ -195,6 +316,8 @@
       </aside>
     </main>
 
+    <script src="efeitos.js"></script>
     <script src="renderer.js"></script>
+    <script src="timbre.js"></script>
   </body>
 </html>

@@ -23,6 +23,7 @@ app.setName('voz-tts');
 async function abrirApp(opcoes = {}) {
   const motores = require(path.join(RAIZ, 'electron', 'tts'));
   const modelosVoz = require(path.join(RAIZ, 'electron', 'voz', 'modelos'));
+  const modelosRvc = require(path.join(RAIZ, 'electron', 'voz', 'rvc', 'modelos'));
   const ipc = require(path.join(RAIZ, 'electron', 'ipc'));
 
   await app.whenReady();
@@ -31,6 +32,7 @@ async function abrirApp(opcoes = {}) {
   const pastaMotores = path.join(pastaDados, 'motores');
   motores.piper.definirRaiz(pastaMotores);
   modelosVoz.definirRaiz(pastaMotores);
+  modelosRvc.definirRaiz(pastaMotores);
 
   session.defaultSession.setPermissionRequestHandler((_c, permissao, permitir) =>
     permitir(permissao === 'media' || permissao === 'audioCapture')
@@ -64,6 +66,29 @@ async function abrirApp(opcoes = {}) {
 
 const esperar = (ms) => new Promise((r) => setTimeout(r, ms));
 
+/**
+ * Espera uma condicao na tela virar verdade, em vez de apostar um tempo fixo.
+ *
+ * Carregar a voz na GPU leva ~4s com a placa ja escolhida e ~20s quando o app
+ * precisa sondar as placas. O teste que esperava 12s cravados passava num caso
+ * e falhava no outro -- e a falha parecia bug do app, o que e o pior tipo de
+ * teste que existe.
+ *
+ * @param {import('electron').BrowserWindow} janela
+ * @param {string} expressao JS avaliado na pagina; para quando der verdadeiro
+ * @param {{tetoMs?: number, passoMs?: number}} [opcoes]
+ * @returns {Promise<boolean>} false se estourou o teto
+ */
+async function esperarNaTela(janela, expressao, opcoes = {}) {
+  const limite = Date.now() + (opcoes.tetoMs ?? 90000);
+  const passo = opcoes.passoMs ?? 400;
+  while (Date.now() < limite) {
+    if (await janela.webContents.executeJavaScript(`Boolean(${expressao})`)) return true;
+    await esperar(passo);
+  }
+  return false;
+}
+
 /** Grava a tela num PNG dentro de testes/. */
 async function fotografar(janela, nome) {
   const destino = path.join(__dirname, nome);
@@ -78,4 +103,4 @@ function relatar(titulo, mensagens, dados) {
   console.log(JSON.stringify(dados, null, 2));
 }
 
-module.exports = { abrirApp, esperar, fotografar, relatar, RAIZ };
+module.exports = { abrirApp, esperar, esperarNaTela, fotografar, relatar, RAIZ };
